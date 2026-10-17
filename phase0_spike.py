@@ -277,6 +277,35 @@ async def cmd_watch(title: str, year: str | None = None):
     c = await connect_with_wake()
     await open_netflix_title(c, nid, press_play=True)
     await c.disconnect()
+    
+def find_youtube(query: str):
+    """Search YouTube and return (video_id, title) for the top result."""
+    from yt_dlp import YoutubeDL
+    opts = {"quiet": True, "skip_download": True, "extract_flat": True}
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+    entries = info.get("entries") or []
+    if not entries:
+        return None
+    return entries[0]["id"], entries[0].get("title")
+
+
+async def cmd_song(*words):
+    """Search YouTube for a song by name, wake the TV, and play the top result."""
+    query = " ".join(words)
+    result = await asyncio.to_thread(find_youtube, query)
+    if not result:
+        print(f"No YouTube result for '{query}'.")
+        return
+    video_id, vtitle = result
+    print(f"Playing: {vtitle} ({video_id})")
+
+    c = await connect_with_wake()
+    params = {"contentTarget": f"https://www.youtube.com/watch?v={video_id}"}
+    print(await c.launch_app_with_params("youtube.leanback.v4", params))
+    await asyncio.sleep(8)
+    print("current app:", c.tv_state.current_app_id)
+    await c.disconnect()
 
 
 # ---------------------------------------------------------------- Dispatcher
