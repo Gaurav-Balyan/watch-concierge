@@ -1,3 +1,6 @@
 .env
 .webos_key
+__pycache__/
+*.pyc
+.venv/
 settings.json

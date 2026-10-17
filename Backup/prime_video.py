@@ -33,7 +33,7 @@ from aiowebostv import WebOsClient
 
 # Reused from the working script; importing it does NOT run its commands
 # because its main() is guarded by `if __name__ == "__main__"`.
-from phase0_spike import COUNTRY, connect_with_wake
+from Backup.phase0_spike import COUNTRY, connect_with_wake
 
 # ---------------------------------------------------------------- Settings
 PRIME_APP = "amazon"            # app ID on this TV (from `apps`)
