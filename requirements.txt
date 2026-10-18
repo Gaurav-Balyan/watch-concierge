@@ -3,3 +3,6 @@ wakeonlan
 httpx
 python-dotenv
 yt-dlp
+groq
+anthropic
+mcp

@@ -30,6 +30,13 @@ def _int(name: str, default: int) -> int:
         sys.exit(f"Setting {name} must be a whole number, got {raw!r}.")
 
 
+def _bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _list(name: str, default: str) -> list[str]:
     return [item.strip() for item in os.environ.get(name, default).split(",") if item.strip()]
 
@@ -66,3 +73,8 @@ PRIME_TITLE_WAIT = _int("PRIME_TITLE_WAIT", 8)              # profile chosen -> 
 
 # Keys that pick the Prime profile. Verified: the first ENTER picks the profile.
 PRIME_PROFILE_KEYS = _list("PRIME_PROFILE_KEYS", "ENTER")
+
+# ---------------------------------------------------------------- Device server safety
+# While True, device_mcp.py never touches the TV: play_title only reports what it
+# WOULD do. Safe by default. Set DEVICE_DRY_RUN=0 in .env for real runs (Step 5).
+DEVICE_DRY_RUN = _bool("DEVICE_DRY_RUN", True)

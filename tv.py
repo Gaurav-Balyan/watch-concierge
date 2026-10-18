@@ -12,6 +12,10 @@ from wakeonlan import send_magic_packet
 import config
 
 
+class TVUnreachable(RuntimeError):
+    """The TV did not accept a connection (off, asleep, or not on the network)."""
+
+
 async def connect() -> WebOsClient:
     """Open a connection to the TV using the saved pairing key (if any)."""
     ip = config.require("TV_IP")
@@ -62,7 +66,7 @@ async def connect_with_wake(max_wait: int = 90) -> WebOsClient:
             print(f"  waiting for TV... ({waited}s) {type(e).__name__}")
             send_wake()
             await asyncio.sleep(2)
-    raise RuntimeError("TV did not come up after wake")
+    raise TVUnreachable("TV did not come up after wake")
 
 
 async def ask(prompt: str) -> str:
