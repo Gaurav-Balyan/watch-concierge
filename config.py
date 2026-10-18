@@ -71,6 +71,12 @@ PRIME_PICKER_WAIT = _int("PRIME_PICKER_WAIT", 15)           # cold launch -> pro
 PRIME_LINK_TO_KEY_WAIT = _int("PRIME_LINK_TO_KEY_WAIT", 15)
 PRIME_TITLE_WAIT = _int("PRIME_TITLE_WAIT", 8)              # profile chosen -> title page
 
+# Whether `watch`/play_title also presses Play on Prime's title page. Off by default:
+# the focused button could be rent/buy on some titles. Play was verified to work on
+# subscription titles, and the catalog only returns subscription titles, so turning it
+# on is reasonable. It is a setting in code, never a parameter the model can choose.
+PRIME_PRESS_PLAY = _bool("PRIME_PRESS_PLAY", False)
+
 # Keys that pick the Prime profile. Verified: the first ENTER picks the profile.
 PRIME_PROFILE_KEYS = _list("PRIME_PROFILE_KEYS", "ENTER")
 

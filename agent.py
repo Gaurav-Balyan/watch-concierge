@@ -53,6 +53,8 @@ SYSTEM = (
     "If play_title returns status 'requested', say the commands were sent but that you "
     "cannot confirm playback. If it returns 'dry_run', say it was only a simulation. "
     "If a tool returns an error, explain it plainly and do not retry the same call."
+    "If the result has next_step_for_user or pressed_play is false, "
+    "tell the user plainly what they still need to do (for example, press Play). "
 )
 
 
@@ -248,7 +250,7 @@ async def run_agent(user_request: str) -> str:
                     seen_calls[key] = "error" if is_error else "ok"
 
                 shown = " ".join(result.split())
-                shown = shown if len(shown) < 300 else shown[:300] + "..."
+                shown = shown if len(shown) < 600 else shown[:600] + "..."
                 print(f"    we return : {shown}")
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
@@ -274,6 +276,10 @@ async def list_models():
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     if len(sys.argv) < 2:
         print(__doc__)
         return

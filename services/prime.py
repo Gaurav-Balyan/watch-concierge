@@ -20,7 +20,7 @@ import tv
 NAME = "prime"
 # Off by default: on a title page the focused button could be a rent/buy button,
 # so ENTER is never sent blind. Pass play=yes on the command line to opt in.
-DEFAULT_PLAY = False
+DEFAULT_PLAY = config.PRIME_PRESS_PLAY
 
 
 def to_gti(link_or_id: str) -> str:

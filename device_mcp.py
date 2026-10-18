@@ -20,7 +20,8 @@ design is about safety and honesty:
 
 stdout WARNING: this is a stdio server, and tv.py prints progress. The SDK
 diverts stdout while serving, but that is best-effort, so every TV action also
-runs with stdout redirected to stderr.
+runs with stdout redirected into the log file (logs/device_mcp.log), which is
+also where you look when something fails.
 
 Run it on its own (it just waits for a client), or test with the probe:
     python mcp_probe.py device
@@ -39,9 +40,11 @@ from mcp.types import ToolAnnotations
 
 import config
 import tv
+from logsetup import LogStream, get_logger
 from services import SERVICES
 
 mcp = MCPServer("device")
+log = get_logger("device_mcp")   # see logs/device_mcp.log
 
 ACTION_TIMEOUT = 240          # seconds: wake + app launch + profile + link can take a while
 _action_lock = asyncio.Lock()  # one TV action at a time
@@ -58,10 +61,14 @@ ID_HINTS = {
 
 
 @contextlib.contextmanager
-def stdout_to_stderr():
-    """Send any print() made by TV code to stderr, keeping stdout for the protocol."""
-    with contextlib.redirect_stdout(sys.stderr):
-        yield
+def stdout_to_log():
+    """Send any print() made by TV code into the log, keeping stdout for the protocol."""
+    stream = LogStream(log)
+    try:
+        with contextlib.redirect_stdout(stream):
+            yield
+    finally:
+        stream.flush()
 
 
 # ---------------------------------------------------------------- Read-only tool
@@ -75,7 +82,7 @@ async def tv_status() -> dict:
     reachable=False means the TV did not answer (it may be off or in deep standby);
     that is normal information, not an error.
     """
-    with stdout_to_stderr():
+    with stdout_to_log():
         try:
             c = await asyncio.wait_for(tv.connect(), 8)
         except Exception:  # noqa: BLE001
@@ -124,6 +131,8 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
             "Retrying with the same input will fail again."
         )
     svc = SERVICES[service]
+    log.info("play_title requested: service=%s content_id=%s title=%r dry_run=%s",
+             service, content_id, title, config.DEVICE_DRY_RUN)
 
     # 2. DRY RUN: touch nothing.
     if config.DEVICE_DRY_RUN:
@@ -148,24 +157,27 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
         try:
             await asyncio.wait_for(_open(svc, content_id), ACTION_TIMEOUT)
         except tv.TVUnreachable as e:
+            log.error("play_title TV_UNREACHABLE: %s", e)
             raise ToolError(
                 f"TV_UNREACHABLE: {e}. Nothing was launched. "
                 "Retrying is reasonable once the TV is on and on the network."
             ) from e
         except (asyncio.TimeoutError, TimeoutError) as e:
+            log.error("play_title TIMEOUT after %ss", ACTION_TIMEOUT)
             raise ToolError(
                 f"TIMEOUT: the action did not finish within {ACTION_TIMEOUT}s. "
                 "The TV state is UNKNOWN. Do not retry automatically; ask the user to check the TV."
             ) from e
         except Exception as e:  # noqa: BLE001
-            print(f"play_title crashed: {type(e).__name__}: {e}", file=sys.stderr)
+            log.exception("play_title crashed")
             raise ToolError(
                 f"UNKNOWN_STATE: the action failed part-way ({type(e).__name__}). "
                 "The TV state is UNKNOWN. Do not retry automatically; ask the user to check the TV."
             ) from e
 
     pressed_play = bool(svc.DEFAULT_PLAY)
-    return {
+    log.info("play_title requested OK: service=%s pressed_play=%s", service, pressed_play)
+    result = {
         "status": "requested",
         "verified": False,
         "service": service,
@@ -174,17 +186,27 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
         "pressed_play": pressed_play,
         "message": (
             f"Commands were sent to open the title on {service}"
-            + (" and press Play" if pressed_play else " (Play was not pressed; the title page should be open)")
+            + (" and press Play" if pressed_play
+               else ". Play was NOT pressed, so nothing is playing yet: the title page should be "
+                    "open and someone must press Play")
             + ". Playback was NOT verified: the TV does not report it."
         ),
     }
+    if not pressed_play:
+        # A model tends to compress a long message, so the thing the user must do
+        # gets its own field instead of living in the middle of a sentence.
+        result["next_step_for_user"] = (
+            "The title page should be open on the TV, but Play was not pressed. "
+            "The user needs to press Play with the remote."
+        )
+    return result
 
 
 async def _open(svc, content_id: str):
-    """Wake + connect + open the title, always disconnecting. All prints go to stderr."""
+    """Wake + connect + open the title, always disconnecting. All prints go to the log."""
     # The redirect must cover the WHOLE function, including the disconnect in
     # `finally`: a stray print there would also land on the protocol channel.
-    with stdout_to_stderr():
+    with stdout_to_log():
         c = None
         try:
             c = await tv.connect_with_wake()
@@ -199,5 +221,5 @@ if __name__ == "__main__":
     config.require("TV_IP")
     config.require("TV_MAC")
     mode = "DRY RUN (TV is never touched)" if config.DEVICE_DRY_RUN else "LIVE (will control the TV)"
-    print(f"device-mcp starting on stdio: {mode}", file=sys.stderr)
+    log.info("device-mcp starting on stdio: %s", mode)
     mcp.run()   # default transport: stdio
