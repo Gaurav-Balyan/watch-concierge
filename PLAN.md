@@ -27,6 +27,8 @@ Each phase ends with a testable result, and each one de-risks the next. Phase 0 
 
 # Status (update as work proceeds)
 
+New chat? Read `HANDOFF.md` first: it has the current state and the Phase 2 starting point.
+
 ## Phase 0: DONE
 Findings on this LG TV (India):
 - Pairing, wake-on-LAN (from standby) and app launch work through `aiowebostv`.
@@ -105,11 +107,67 @@ Come back to these only if/when they matter. Defaults are what the assistant wou
 - Update case 10 to the "ask" policy (decided above) when convenient.
 - Then Phase 2 (identity and data): "who is asking" also fixes the first-profile-only limit on Prime/Netflix.
 
-## Phases 2-5: NOT STARTED
+## Phase 2: IN PROGRESS (identity and data)
+Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev passwords `<name>-dev-pass`.
+- Step 1 DONE: Keycloak 26.0 in Docker, dev mode (HTTP, built-in DB; production needs HTTPS + Postgres).
+  `docker run ... -v "${PWD}\keycloak:/opt/keycloak/data/import" quay.io/keycloak/keycloak:26.0 start-dev --import-realm`
+  Learned: the issuer publishes discovery + JWKS; servers verify tokens locally with the public key (kid picks the key).
+- Step 2 DONE: `keycloak/household-realm.json` (realm, public client `concierge-cli` with PKCE S256, two users).
+  Learned: a JWT is signed JSON: iss, sub, azp, exp/iat; the first token had NO `aud`.
+- Step 3 DONE: one client scope per MCP server (catalog-mcp, device-mcp, taste-mcp) adds that `aud`; the agent
+  requests only the scope it needs. Fixed user ids so `sub` survives re-import.
+  Learned: listing clientScopes in an import drops ALL Keycloak defaults (even `sub`), so `basic` and `profile`
+  are defined explicitly; tokens now carry only sub + preferred_username.
+- Step 4 DONE: `auth.py` TokenVerifier (RS256 only, iss, aud, exp, sub; fixed AuthError codes) +
+  `tests/test_auth.py` (17 incl. 4 live). Tests were mutation-checked (weakened verifier must fail them).
+  Learned: test the REASON for a rejection, not just rejection; alg=none and HS256-with-public-key attacks.
+- Step 5 DONE: `catalog_mcp.py --http` (127.0.0.1:8001) with `McpTokenVerifier` + AuthSettings; stdio unchanged
+  (agent and evals still use stdio). `tests/test_catalog_http.py` (6): no token / garbage / device-mcp token /
+  no-scope / edited token -> 401 with the right logged reason; catalog-mcp token -> sees search_title.
+  Learned: stdio trusts the process, HTTP must trust the token; the 401 points to protected-resource metadata
+  that names Keycloak (MCP auth discovery). Eval fingerprint `tool_servers` changed (expected).
+- Step 6 DONE: `login.py` (authorization code + PKCE, browser login, callback on 127.0.0.1:8765, keeps only the
+  refresh token in git-ignored `.login.json`; `--status`, `--logout`). `access_token_for("<server>-mcp")` narrows
+  each access token to ONE server via the refresh grant's `scope`. `agent.py`: a SERVERS entry may be a URL
+  (CATALOG_MCP_URL in .env) -> HTTP with that server's token; `--tools` shows "http, as <user>".
+  Realm: password grant OFF; session idle 1 day, max 7 days. Tests now get tokens through the real login page
+  (`tests/kc_browser.py`, a scripted browser). `tests/test_login.py` (9): password grant off, wrong password,
+  state mismatch ignored, stolen code useless without verifier (and single-use), logout kills the refresh token,
+  each token opens exactly one server, agent reaches catalog over HTTP as the logged-in person. 32 tests total.
+  Learned: PKCE binds the code to the program that started the login; `state` binds the answer to the attempt;
+  one login, many narrow tokens (down-scoping on refresh).
+- Step 7 DONE: `device_mcp.py --http` (127.0.0.1:8002), audience device-mcp, same pattern as catalog.
+  `play_title` logs WHO asked (`auth.caller_name()`: token user, or "local (stdio)"), the start of an audit trail.
+  Agent: DEVICE_MCP_URL in .env -> device over HTTP. `tests/test_device_http.py` (5, server forced to DRY RUN):
+  catalog-mcp token, taste-mcp token, and a token for both other servers are all refused (WRONG_AUDIENCE);
+  a device-mcp token plays (dry run) and the log says "requested by mishika". 37 tests total.
+  Learned: "the Catalog agent cannot control the TV" is now enforced by the network, not by agent behaviour:
+  even a valid login for the same person is refused if the token was issued for another server.
+  Verified live: catalog AND device over HTTP as mishika, The Friend played on Netflix (one run).
+- Step 8 DONE: `taste_mcp.py --http` (127.0.0.1:8003, HTTP only) on Postgres 16 in Docker (`household-db`,
+  host port 5433, volume `household-db-data`; `db/01_init.sql` + `db/schema.psql` run once on an empty volume and
+  create databases `household` and `household_test`). Tools: get_my_taste, remember_taste, forget_taste,
+  record_watch (AGENT ONLY: hidden from the model; agent code calls it after a real play, not a dry run).
+  Two independent layers: (1) no tool has a user argument, the user is the token's `sub`, every query says
+  WHERE user_id = caller; (2) Postgres row-level security keyed on `app.user_id` (set per transaction),
+  FORCE'd, and the server logs in as `taste_app` (not superuser: superusers bypass RLS; no DELETE on history,
+  no DDL). `tests/test_taste_http.py` (13): Mishika cannot see Gaurav's taste/history, naming Gaurav in tool
+  arguments does not help, forget only touches your own rows, DB hides other rows without WHERE, no user set =
+  no rows, DB refuses a row for someone else, app role cannot DELETE history or DROP, stdio = NOT_LOGGED_IN,
+  agent records only real plays. 50 tests total. Mutation-checked: with RLS off only the DB tests fail (the
+  server layer holds alone); with the server's WHERE removed nothing fails (RLS holds alone: defence in depth).
+  Learned: put the identity in the token, not the arguments; enforce twice; least-privilege DB role.
+- Step 9 NEXT: per-person TV profiles (device-mcp picks the profile of the person in the token).
+  Then Phase 2 is complete.
+
+## Phases 3-5: NOT STARTED
 
 ## Known fragile points carried forward
 - All waits are fixed sleeps, not checks (matters for Phase 4).
 - `close_app` untested on this TV.
 - Both flows press ENTER on the first profile; per-person profiles are a Phase 2+ concern.
+- Access tokens last 5 min and the agent gets them at start: a run longer than that would get 401s mid-run
+  (Phase 4: refresh and retry on 401).
+- Keycloak dev mode keeps its data inside the container: `docker rm` loses it (the realm file re-creates it).
 - Device actions currently run without confirmation (Phase 5 adds approval).
 - A retry today could relaunch a title (Phase 4 adds idempotency).

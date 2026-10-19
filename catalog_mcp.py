@@ -14,12 +14,19 @@ WHY A SEPARATE SERVER
     * It can be swapped, moved to another machine or reused by another agent.
 
 TRANSPORT
-    This runs over stdio: the client launches this file as a subprocess and
+    Default is stdio: the client launches this file as a subprocess and
     talks to it over stdin/stdout. So this server must NEVER print() to
     stdout, because that would corrupt the protocol messages. Log to stderr.
+    stdio needs no login: only a program on this PC can start the process.
+
+    With --http (Phase 2) it listens on the network instead, and then anyone
+    who can reach the port could call it. So over HTTP every request must carry
+    a Keycloak token issued FOR catalog-mcp (audience + scope), checked by
+    auth.McpTokenVerifier before any tool code runs. No valid token = 401.
 
 Run it on its own (it will just wait for a client):
-    python catalog_mcp.py
+    python catalog_mcp.py           # stdio (what agent.py and the evals use today)
+    python catalog_mcp.py --http    # HTTP on 127.0.0.1:CATALOG_MCP_PORT, tokens required
 Test it with the probe client:
     python mcp_probe.py "the friend"
 """
@@ -27,14 +34,28 @@ import dataclasses
 import sys
 
 import httpx
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer   # mcp 2.x; in mcp 1.x this was FastMCP
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 import config
 import lookup
+from auth import McpTokenVerifier
 
-mcp = MCPServer("catalog")
+AUDIENCE = "catalog-mcp"   # this server's name in Keycloak (a client scope in household-realm.json)
+
+# The auth settings only take effect over HTTP; stdio ignores them.
+mcp = MCPServer(
+    "catalog",
+    token_verifier=McpTokenVerifier(AUDIENCE),
+    auth=AuthSettings(
+        issuer_url=config.OIDC_ISSUER,               # told to clients in the 401, so they know where to log in
+        resource_server_url=f"http://127.0.0.1:{config.CATALOG_MCP_PORT}/mcp",
+        required_scopes=[AUDIENCE],                  # the token's scope must include catalog-mcp
+        validate_token_resource=False,               # our verifier already checks the audience itself
+    ),
+)
 
 
 # read_only: it changes nothing. open_world: it talks to an outside service.
@@ -81,5 +102,10 @@ async def search_title(title: str, year: str | None = None) -> dict:
 
 if __name__ == "__main__":
     config.require("RAPIDAPI_KEY")   # fail fast with a clear message on stderr
-    print("catalog-mcp starting on stdio", file=sys.stderr)
-    mcp.run()   # default transport: stdio
+    if "--http" in sys.argv:
+        print(f"catalog-mcp starting on http://127.0.0.1:{config.CATALOG_MCP_PORT}/mcp "
+              f"(tokens from {config.OIDC_ISSUER})", file=sys.stderr)
+        mcp.run(transport="streamable-http", host="127.0.0.1", port=config.CATALOG_MCP_PORT)
+    else:
+        print("catalog-mcp starting on stdio", file=sys.stderr)
+        mcp.run()   # default transport: stdio

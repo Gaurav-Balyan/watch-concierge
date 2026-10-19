@@ -84,3 +84,21 @@ PRIME_PROFILE_KEYS = _list("PRIME_PROFILE_KEYS", "ENTER")
 # While True, device_mcp.py never touches the TV: play_title only reports what it
 # WOULD do. Safe by default. Set DEVICE_DRY_RUN=0 in .env for real runs (Step 5).
 DEVICE_DRY_RUN = _bool("DEVICE_DRY_RUN", True)
+
+# ---------------------------------------------------------------- Identity (Phase 2)
+# Who issues tokens. MCP servers accept only tokens signed by this issuer's keys.
+OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "http://localhost:8080/realms/household")
+
+# Where each MCP server listens when run with --http (Phase 2). 127.0.0.1 = this PC only.
+CATALOG_MCP_PORT = _int("CATALOG_MCP_PORT", 8001)
+# Set to http://127.0.0.1:8001/mcp to make the agent use catalog-mcp over HTTP (needs python login.py).
+# Empty = start catalog_mcp.py over stdio as in Phase 1.
+CATALOG_MCP_URL = os.environ.get("CATALOG_MCP_URL", "")
+DEVICE_MCP_PORT = _int("DEVICE_MCP_PORT", 8002)
+# Set to http://127.0.0.1:8002/mcp to make the agent use device-mcp over HTTP (needs python login.py).
+DEVICE_MCP_URL = os.environ.get("DEVICE_MCP_URL", "")
+TASTE_MCP_PORT = _int("TASTE_MCP_PORT", 8003)
+# Set to http://127.0.0.1:8003/mcp to give the agent the taste tools (HTTP only: they need to know WHO asks).
+TASTE_MCP_URL = os.environ.get("TASTE_MCP_URL", "")
+# taste_mcp.py connects as the limited role taste_app (see db/01_init.sql), never as the superuser.
+TASTE_DB_URL = os.environ.get("TASTE_DB_URL", "postgresql://taste_app:taste-dev-pass@127.0.0.1:5433/household")

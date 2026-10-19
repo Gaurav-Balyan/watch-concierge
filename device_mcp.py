@@ -23,6 +23,11 @@ diverts stdout while serving, but that is best-effort, so every TV action also
 runs with stdout redirected into the log file (logs/device_mcp.log), which is
 also where you look when something fails.
 
+HTTP (Phase 2, Step 7): `python device_mcp.py --http` listens on 127.0.0.1:DEVICE_MCP_PORT
+and accepts only Keycloak tokens issued FOR device-mcp. A catalog-mcp token is refused
+with 401 before any TV code runs: the catalog side can never control the TV.
+Every play_title logs WHO asked (the token's user), the start of an audit trail.
+
 Run it on its own (it just waits for a client), or test with the probe:
     python mcp_probe.py device
     python mcp_probe.py device tv_status
@@ -34,16 +39,30 @@ import re
 import sys
 from typing import Literal
 
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 import config
 import tv
+from auth import McpTokenVerifier, caller_name
 from logsetup import LogStream, get_logger
 from services import SERVICES
 
-mcp = MCPServer("device")
+AUDIENCE = "device-mcp"   # this server's name in Keycloak (a client scope in household-realm.json)
+
+# The auth settings only take effect over HTTP; stdio ignores them.
+mcp = MCPServer(
+    "device",
+    token_verifier=McpTokenVerifier(AUDIENCE),
+    auth=AuthSettings(
+        issuer_url=config.OIDC_ISSUER,
+        resource_server_url=f"http://127.0.0.1:{config.DEVICE_MCP_PORT}/mcp",
+        required_scopes=[AUDIENCE],                  # the token's scope must include device-mcp
+        validate_token_resource=False,               # our verifier already checks the audience itself
+    ),
+)
 log = get_logger("device_mcp")   # see logs/device_mcp.log
 
 ACTION_TIMEOUT = 240          # seconds: wake + app launch + profile + link can take a while
@@ -131,8 +150,8 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
             "Retrying with the same input will fail again."
         )
     svc = SERVICES[service]
-    log.info("play_title requested: service=%s content_id=%s title=%r dry_run=%s",
-             service, content_id, title, config.DEVICE_DRY_RUN)
+    log.info("play_title requested by %s: service=%s content_id=%s title=%r dry_run=%s",
+             caller_name(), service, content_id, title, config.DEVICE_DRY_RUN)
 
     # 2. DRY RUN: touch nothing.
     if config.DEVICE_DRY_RUN:
@@ -221,5 +240,10 @@ if __name__ == "__main__":
     config.require("TV_IP")
     config.require("TV_MAC")
     mode = "DRY RUN (TV is never touched)" if config.DEVICE_DRY_RUN else "LIVE (will control the TV)"
-    log.info("device-mcp starting on stdio: %s", mode)
-    mcp.run()   # default transport: stdio
+    if "--http" in sys.argv:
+        log.info("device-mcp starting on http://127.0.0.1:%s/mcp: %s (tokens from %s)",
+                 config.DEVICE_MCP_PORT, mode, config.OIDC_ISSUER)
+        mcp.run(transport="streamable-http", host="127.0.0.1", port=config.DEVICE_MCP_PORT)
+    else:
+        log.info("device-mcp starting on stdio: %s", mode)
+        mcp.run()   # default transport: stdio

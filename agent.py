@@ -23,6 +23,10 @@ Run:
     python agent.py --models                     # models your Groq key can use
 
 Needs in .env: GROQ_API_KEY, GROQ_MODEL, RAPIDAPI_KEY, TV_IP, TV_MAC.
+
+PHASE 2 (Step 6): a server in SERVERS may be a URL instead of a script. Then the
+agent connects over HTTP and sends a token for THAT server only (its audience),
+taken from your login (python login.py). Set CATALOG_MCP_URL in .env to try it.
 """
 import asyncio
 import json
@@ -32,8 +36,11 @@ from contextlib import AsyncExitStack
 
 from groq import AsyncGroq, NotFoundError
 from mcp import Client, StdioServerParameters
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 import config   # also loads .env, so GROQ_API_KEY is available
+import login
 
 # No hard-coded default: model names come and go, so a stale default just breaks.
 MODEL = os.environ.get("GROQ_MODEL", "")
@@ -41,10 +48,19 @@ MAX_TURNS = 6          # a safety limit: an agent loop must never be able to run
 TOOL_CALL_TIMEOUT = 300   # seconds: a real TV action (wake + launch) can take over a minute
 
 # The MCP servers this agent connects to. To add a capability, add a server here.
+# A script name = start it over stdio (no login). A URL = connect over HTTP with a token
+# for "<name>-mcp" (Phase 2). CATALOG_MCP_URL / DEVICE_MCP_URL empty = stdio, as in Phase 1.
+# TASTE_MCP_URL set = also connect taste-mcp (HTTP only).
 SERVERS = {
-    "catalog": "catalog_mcp.py",
-    "device": "device_mcp.py",
+    "catalog": config.CATALOG_MCP_URL or "catalog_mcp.py",
+    "device": config.DEVICE_MCP_URL or "device_mcp.py",
 }
+if config.TASTE_MCP_URL:   # taste has no stdio mode: per-person data needs a login
+    SERVERS["taste"] = config.TASTE_MCP_URL
+
+# Tools the AGENT CODE calls, never the model. Bookkeeping must not depend on the model
+# remembering to do it (or being talked out of it).
+AGENT_ONLY_TOOLS = {"record_watch"}
 
 SYSTEM = (
     "You are a household TV concierge for a family in India. "
@@ -129,17 +145,28 @@ class McpToolbox:
         self.tools: list[dict] = []          # what the MODEL sees (Groq format)
         self.routes: dict[str, tuple[str, Client]] = {}   # tool name -> (server, client)
         self.read_only: dict[str, bool] = {}
+        self.transports: dict[str, str] = {}   # server -> "stdio" | "http, as <user>"
 
     async def __aenter__(self):
         await self._stack.__aenter__()
         try:
-            for name, script in self.servers.items():
-                params = StdioServerParameters(
-                    command=sys.executable,
-                    args=[str(config.BASE_DIR / script)],
-                    cwd=str(config.BASE_DIR),
-                )
-                client = await self._stack.enter_async_context(Client(params))
+            for name, target in self.servers.items():
+                if target.startswith(("http://", "https://")):
+                    # HTTP: this server gets a token whose audience is ONLY "<name>-mcp".
+                    # The same login cannot be replayed by this server against another one.
+                    token = login.access_token_for(f"{name}-mcp")
+                    http = await self._stack.enter_async_context(
+                        create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}))
+                    transport = streamable_http_client(target, http_client=http)
+                    self.transports[name] = f"http, as {login.load_login()['username']}"
+                else:
+                    transport = StdioServerParameters(
+                        command=sys.executable,
+                        args=[str(config.BASE_DIR / target)],
+                        cwd=str(config.BASE_DIR),
+                    )
+                    self.transports[name] = "stdio"
+                client = await self._stack.enter_async_context(Client(transport))
                 for t in (await client.list_tools()).tools:
                     if t.name in self.routes:
                         # Two servers claiming one name: one would silently shadow the other.
@@ -150,7 +177,8 @@ class McpToolbox:
                     self.routes[t.name] = (name, client)
                     ann = getattr(t, "annotations", None)
                     self.read_only[t.name] = bool(ann and getattr(ann, "read_only_hint", False))
-                    self.tools.append(to_groq_tool(t))
+                    if t.name not in AGENT_ONLY_TOOLS:
+                        self.tools.append(to_groq_tool(t))   # only these are shown to the model
         except BaseException:
             await self._stack.aclose()
             raise
@@ -163,7 +191,9 @@ class McpToolbox:
         lines = []
         for name, (server, _) in self.routes.items():
             kind = "read-only" if self.read_only[name] else "ACTS ON THE WORLD"
-            lines.append(f"  {server}.{name}  [{kind}]")
+            if name in AGENT_ONLY_TOOLS:
+                kind += ", agent only"
+            lines.append(f"  {server}.{name}  [{kind}]  ({self.transports.get(server, '?')})")
         return "\n".join(lines)
 
     async def call(self, name: str, args: dict) -> tuple[str, bool]:
@@ -180,6 +210,22 @@ class McpToolbox:
 
 
 # ---------------------------------------------------------------- The agent loop
+
+async def record_watch_if_played(toolbox: "McpToolbox", args: dict, result_text: str):
+    """After a real play (not a dry run), add it to the logged-in person's history."""
+    if "record_watch" not in toolbox.routes:
+        return                       # taste server not connected
+    try:
+        result = json.loads(result_text)
+    except json.JSONDecodeError:
+        return
+    if result.get("status") != "requested":
+        return                       # dry run or failure: nothing was watched
+    text, is_error = await toolbox.call("record_watch", {
+        "title": args.get("title") or result.get("title") or args.get("content_id", "?"),
+        "service": args.get("service"), "content_id": args.get("content_id")})
+    print(f"    (agent) record_watch: {' '.join(text.split())[:200]}")
+
 
 async def run_agent(user_request: str, trace: list | None = None) -> str:
     """Run one request. If `trace` is a list, every tool call the model makes is
@@ -240,6 +286,8 @@ async def run_agent(user_request: str, trace: list | None = None) -> str:
                 executed, is_error = False, True      # True/False: did the call really reach a server
                 if parse_error:
                     result = parse_error
+                elif name in AGENT_ONLY_TOOLS:
+                    result = f"Unknown tool: {name}"   # the model was never offered it
                 elif seen_calls.get(key) == "error":
                     # The model repeated a call that already failed: don't run it again.
                     result = ("BLOCKED: this exact call already failed in this request. "
@@ -252,6 +300,8 @@ async def run_agent(user_request: str, trace: list | None = None) -> str:
                     result, is_error = await toolbox.call(name, args)
                     executed = True
                     seen_calls[key] = "error" if is_error else "ok"
+                    if name == "play_title" and not is_error:
+                        await record_watch_if_played(toolbox, args, result)
 
                 shown = " ".join(result.split())
                 shown = shown if len(shown) < 600 else shown[:600] + "..."
@@ -291,7 +341,10 @@ def main():
         print(__doc__)
         return
     if sys.argv[1] == "--tools":
-        asyncio.run(show_tools())
+        try:
+            asyncio.run(show_tools())
+        except login.LoginError as e:
+            sys.exit(f"Login problem: {e}")
         return
     config.require("GROQ_API_KEY")
     if sys.argv[1] == "--models":
@@ -302,6 +355,8 @@ def main():
                  "and add GROQ_MODEL=<id> to .env.")
     try:
         answer = asyncio.run(run_agent(" ".join(sys.argv[1:])))
+    except login.LoginError as e:
+        sys.exit(f"Login problem: {e}")
     except NotFoundError:
         sys.exit(f"Groq says model '{MODEL}' is not available to your key. "
                  "Run `python agent.py --models` and set GROQ_MODEL in .env.")

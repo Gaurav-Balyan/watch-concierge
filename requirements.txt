@@ -6,3 +6,5 @@ yt-dlp
 groq
 anthropic
 mcp
+pyjwt[crypto]>=2.8
+psycopg[binary]>=3.1

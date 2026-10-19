@@ -1,0 +1,43 @@
+-- taste-mcp schema (Phase 2, Step 8). Applied by 01_init.sql to BOTH databases:
+-- household (real data) and household_test (used by tests/test_taste_http.py).
+-- The .psql extension stops the Postgres image from running this file on its own.
+
+-- Tables. Every row belongs to one person: user_id is the token's `sub`.
+CREATE TABLE taste_items (
+    user_id    uuid        NOT NULL,
+    kind       text        NOT NULL CHECK (kind IN ('like', 'dislike')),
+    item       text        NOT NULL CHECK (length(item) BETWEEN 1 AND 100),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, kind, item)
+);
+
+CREATE TABLE watch_history (
+    id         bigserial   PRIMARY KEY,
+    user_id    uuid        NOT NULL,
+    title      text        NOT NULL,
+    service    text        NOT NULL,
+    content_id text        NOT NULL,
+    watched_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX watch_history_user_time ON watch_history (user_id, watched_at DESC);
+
+-- 3. Row-level security: the DATABASE only shows a session the rows of the person named in
+--    the setting app.user_id, which taste_mcp.py sets from the verified token for each request.
+--    Even a query with no WHERE clause (a bug) cannot see someone else's rows.
+--    No setting = no rows (current_setting(..., true) returns NULL, and NULL matches nothing).
+ALTER TABLE taste_items   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE taste_items   FORCE  ROW LEVEL SECURITY;
+ALTER TABLE watch_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE watch_history FORCE  ROW LEVEL SECURITY;
+
+CREATE POLICY own_rows ON taste_items
+    USING      (user_id = nullif(current_setting('app.user_id', true), '')::uuid)
+    WITH CHECK (user_id = nullif(current_setting('app.user_id', true), '')::uuid);
+CREATE POLICY own_rows ON watch_history
+    USING      (user_id = nullif(current_setting('app.user_id', true), '')::uuid)
+    WITH CHECK (user_id = nullif(current_setting('app.user_id', true), '')::uuid);
+
+-- 4. Exactly the rights the app needs. No DELETE on history, no DDL.
+GRANT SELECT, INSERT, DELETE ON taste_items   TO taste_app;
+GRANT SELECT, INSERT         ON watch_history TO taste_app;
+GRANT USAGE ON SEQUENCE watch_history_id_seq  TO taste_app;

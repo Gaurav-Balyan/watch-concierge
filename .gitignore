@@ -8,3 +8,5 @@ settings.json
 device_mcp.log
 # eval output (results of runs, server logs)
 evals/results/
+# Phase 2: your saved login (refresh token). Never commit.
+.login.json
