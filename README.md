@@ -36,6 +36,13 @@ python cli.py                             # full command list
 | `services/youtube.py` | YouTube search (yt-dlp) and play |
 | `concierge.py` | `watch()` and `song()`: the layer a chat or voice front end calls |
 | `cli.py` | Command-line entry point |
+| `agent.py` | Phase 1 Step 4: the agent loop (Groq); tools are discovered from the MCP servers |
+| `agent_inline_tools.py` | Reference: Step 1 version with tools written inside the file |
+| `catalog_mcp.py` | Phase 1 Step 2: MCP server, `search_title` (read-only) |
+| `device_mcp.py` | Phase 1 Step 3: MCP server, `tv_status` and `play_title` (acts on the TV; dry run by default) |
+| `logsetup.py` | Log file + print-capture for the MCP servers (`logs/device_mcp.log`) |
+| `evals/` | Phase 1 Step 6: eval cases, fake catalog and TV, runner, self-test (see below) |
+| `mcp_probe.py` | Test any MCP server without a model: `python mcp_probe.py device tv_status` |
 | `experiments.py` | Rarely used diagnostics: `apps`, `services`, `avail`, `keys`, `probe` |
 
 ### Adding another service (JioHotstar, SonyLIV, ...)
@@ -62,3 +69,19 @@ Not verified, or fragile:
 ## Security
 
 `.env` and `.webos_key` are in `.gitignore`. If an API key was ever pasted into a chat or committed, regenerate it.
+
+## Evals (Phase 1, Step 6)
+
+Fake catalog + fake TV, so nothing touches your TV or your RapidAPI quota. They do use Groq calls.
+
+```powershell
+python evals/selftest.py                      # test the tests first (no API needed)
+python evals/run_evals.py --reps 3 --label baseline
+python evals/run_evals.py --only 2,3 --show   # some cases, and print failing answers
+python evals/run_evals.py --compare evals/results\A.json evals/results\B.json
+```
+
+Change ONE thing between two runs (a prompt line, a tool description, the model), run again with a new
+`--label`, and compare. The compare output lists what differs between the runs and warns if more than one thing did.
+
+conda activate "C:\Users\Gaurav\anaconda3\envs\watch-concierge"

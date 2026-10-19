@@ -51,10 +51,10 @@ SYSTEM = (
     "Use search_title to find where a title is streaming, then play_title to open it. "
     "Call play_title at most once per request. "
     "If play_title returns status 'requested', say the commands were sent but that you "
-    "cannot confirm playback. If it returns 'dry_run', say it was only a simulation. "
-    "If a tool returns an error, explain it plainly and do not retry the same call."
-    "If the result has next_step_for_user or pressed_play is false, "
+    "cannot confirm playback. If the result has next_step_for_user or pressed_play is false, "
     "tell the user plainly what they still need to do (for example, press Play). "
+    "If it returns 'dry_run', say it was only a simulation. "
+    "If a tool returns an error, explain it plainly and do not retry the same call."
 )
 
 
@@ -181,7 +181,9 @@ class McpToolbox:
 
 # ---------------------------------------------------------------- The agent loop
 
-async def run_agent(user_request: str) -> str:
+async def run_agent(user_request: str, trace: list | None = None) -> str:
+    """Run one request. If `trace` is a list, every tool call the model makes is
+    appended to it as a dict (used by the evals; normal runs leave it None)."""
     client = AsyncGroq()   # reads GROQ_API_KEY from the environment
     messages = [
         {"role": "system", "content": SYSTEM},
@@ -235,6 +237,7 @@ async def run_agent(user_request: str) -> str:
                 print(f"    model asks: {server}.{name}({tc.function.arguments})")
 
                 key = (name, json.dumps(args, sort_keys=True))
+                executed, is_error = False, True      # True/False: did the call really reach a server
                 if parse_error:
                     result = parse_error
                 elif seen_calls.get(key) == "error":
@@ -247,11 +250,15 @@ async def run_agent(user_request: str) -> str:
                               "Tell the user what was done.")
                 else:
                     result, is_error = await toolbox.call(name, args)
+                    executed = True
                     seen_calls[key] = "error" if is_error else "ok"
 
                 shown = " ".join(result.split())
                 shown = shown if len(shown) < 600 else shown[:600] + "..."
                 print(f"    we return : {shown}")
+                if trace is not None:
+                    trace.append({"tool": name, "args": args, "result": result,
+                                  "is_error": is_error, "executed": executed})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     return f"Stopped after {MAX_TURNS} turns without a final answer."

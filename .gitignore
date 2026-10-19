@@ -3,5 +3,8 @@
 __pycache__/
 *.pyc
 .venv/
+logs/
 settings.json
 device_mcp.log
+# eval output (results of runs, server logs)
+evals/results/
