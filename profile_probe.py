@@ -37,8 +37,8 @@ async def main(position: int):
         start = time.monotonic()
         await c.launch_app(APP)
         await tv.ask("   Press Enter the moment the profile picker ('Who's watching?') is fully shown... ")
-        print(f"   Picker took {time.monotonic() - start:.0f} s (the code waits NETFLIX_PROFILE_WAIT="
-              f"{config.NETFLIX_PROFILE_WAIT} s). If no picker appeared, say what is on screen.")
+        print(f"   Picker took {time.monotonic() - start:.0f} s (the code waits NETFLIX_PICKER_WAIT="
+              f"{config.NETFLIX_PICKER_WAIT} s). If no picker appeared, say what is on screen.")
 
         keys = tv.profile_keys(position, config.NETFLIX_PICKER_LAYOUT)[:-1]   # all but ENTER
         reset, move = keys[:config.PROFILE_RESET_PRESSES], keys[config.PROFILE_RESET_PRESSES:]

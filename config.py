@@ -97,11 +97,11 @@ def _profiles(name: str, default: str) -> dict[str, int]:
 # Position of each person's profile on each app's picker (logged-in username -> position).
 NETFLIX_PROFILES = _profiles("NETFLIX_PROFILES", "gaurav:3,mishika:4")
 PRIME_PROFILES = _profiles("PRIME_PROFILES", "gaurav:1,mishika:3")
-# How each app's picker is laid out. Verified on this TV: Netflix stacks profiles in a COLUMN
-# (UP/DOWN move between them; LEFT/RIGHT reach the edit pencil, so never press them there).
-# Prime: assumed a ROW (LEFT/RIGHT), NOT yet verified.
+# How each app's picker is laid out. Verified on this TV (2026-10-20): BOTH Netflix and Prime stack
+# profiles in a COLUMN (UP/DOWN move between them). On Netflix, LEFT/RIGHT reach the edit pencil,
+# so never press them on a picker.
 NETFLIX_PICKER_LAYOUT = os.environ.get("NETFLIX_PICKER_LAYOUT", "column")
-PRIME_PICKER_LAYOUT = os.environ.get("PRIME_PICKER_LAYOUT", "row")
+PRIME_PICKER_LAYOUT = os.environ.get("PRIME_PICKER_LAYOUT", "column")
 # The picker highlights the LAST USED profile, so we first move to the first profile
 # (UP or LEFT this many times), then DOWN/RIGHT (position - 1) times, then ENTER.
 PROFILE_RESET_PRESSES = _int("PROFILE_RESET_PRESSES", 5)

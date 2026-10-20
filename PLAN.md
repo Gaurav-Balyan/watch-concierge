@@ -107,7 +107,7 @@ Come back to these only if/when they matter. Defaults are what the assistant wou
 - Update case 10 to the "ask" policy (decided above) when convenient.
 - Then Phase 2 (identity and data): "who is asking" also fixes the first-profile-only limit on Prime/Netflix.
 
-## Phase 2: STEPS 1-8 DONE, STEP 9 AWAITING LIVE CHECK (identity and data)
+## Phase 2: DONE (identity and data), completed 2026-10-20
 Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev passwords `<name>-dev-pass`.
 - Step 1 DONE: Keycloak 26.0 in Docker, dev mode (HTTP, built-in DB; production needs HTTPS + Postgres).
   `docker run ... -v "${PWD}\keycloak:/opt/keycloak/data/import" quay.io/keycloak/keycloak:26.0 start-dev --import-realm`
@@ -157,19 +157,16 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   agent records only real plays. 50 tests total. Mutation-checked: with RLS off only the DB tests fail (the
   server layer holds alone); with the server's WHERE removed nothing fails (RLS holds alone: defence in depth).
   Learned: put the identity in the token, not the arguments; enforce twice; least-privilege DB role.
-- Step 9 BUILT, live debugging: per-person TV profiles. device-mcp maps the TOKEN's user to a profile position
+- Step 9 DONE: per-person TV profiles. device-mcp maps the TOKEN's user to a profile position
   (config NETFLIX_PROFILES gaurav:3,mishika:4; PRIME_PROFILES gaurav:1,mishika:3). The model cannot choose it.
-  First live run FAILED (nothing played). `profile_probe.py` (step-by-step, asks what the screen shows) found:
-  (1) close_app is unreliable: once 403 access denied, once OK; (2) after a real close the picker took 22 s
-  (wait was 15; now NETFLIX_PICKER_WAIT=25); (3) Netflix stacks profiles in a COLUMN: UP/DOWN move, LEFT/RIGHT
-  reach the edit pencil, so the first sequence (LEFT x5, RIGHT x3) put Gaurav in edit mode. Now keys are
-  UP x PROFILE_RESET_PRESSES (5), DOWN x (pos-1), ENTER for Netflix. Prime layout (row) still UNVERIFIED.
-  Also seen: relaunching a still-running Netflix (after a 403 close) brought up the picker in 13 s.
+  First live run FAILED. `profile_probe.py` (step-by-step, asks what the screen shows) found: (1) close_app is
+  unreliable (once 403 access denied, once OK); (2) after a real close the Netflix picker took 21-22 s (now
+  NETFLIX_PICKER_WAIT=25); (3) BOTH pickers stack profiles in a COLUMN; LEFT/RIGHT reach Netflix's edit pencil.
+  Keys now: UP x PROFILE_RESET_PRESSES (5), DOWN x (pos-1), ENTER (the picker highlights the LAST USED profile).
+  Verified live: Netflix as mishika (GOAT opened in her profile), Prime as gaurav (Masterplan played).
   Learned: blind key sequences encode assumptions about a screen we cannot see; probe the real device step by
-  step before trusting them, and keep each assumption in config with a note saying whether it was verified.
+  step, and keep each assumption in config.py with a note saying whether it was verified.
   `tests/test_profiles.py` (6, fake TV records keys) + `test_device_http` profile case. 57 tests total.
-- Phase 2 is COMPLETE once Step 9 passes live (Netflix as mishika while Netflix is open on another profile;
-  Prime as gaurav).
 
 ## Parked from Phase 2 (eval work, one change at a time, measure with --compare)
 - 12b: "I don't like horror, and I love Christopher Nolan films" -> must produce TWO remember_taste calls; the
@@ -177,6 +174,15 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   claim: the trace is the truth, the answer is only a claim). Fix candidates: a prompt line, or remember_taste
   accepting several items.
 - Taste tools are not in the evals yet (eval SERVERS are stdio catalog + device only).
+- `requested` is not `watched`: record_watch runs when commands were SENT, so a title blocked on the TV (seen:
+  The Friend on Mishika's Kids profile, maturity rating) still lands in history. Phase 4/5: verify, or label
+  history entries "requested".
+- Kids profile: Mishika's Netflix profile is a Kids profile. The agent does not know ratings, so it sends titles
+  Netflix will refuse. Default when it matters: add maturity rating to search_title + a per-person "kids" flag,
+  and have the agent say "not available on <name>'s profile" instead of playing.
+- Mixed transports split identity: with taste over HTTP but device over stdio, history went to mishika while the
+  TV used the highlighted (gaurav) profile. Default: run all servers over HTTP when logged in, or have the agent
+  refuse a TV action over stdio while a login is active.
 
 ## Phases 3-5: NOT STARTED
 

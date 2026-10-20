@@ -63,11 +63,12 @@ def test_profile_keys_go_to_the_first_profile_first():
     assert tv.profile_keys(4, "column") == ["UP"] * n + ["DOWN"] * 3 + ["ENTER"]
 
 
-def test_netflix_picker_never_gets_left_or_right():
-    # Verified live: on this TV's Netflix picker LEFT/RIGHT reach the edit pencil.
-    assert config.NETFLIX_PICKER_LAYOUT == "column"
-    for position in (1, 3, 4):
-        assert not {"LEFT", "RIGHT"} & set(tv.profile_keys(position, config.NETFLIX_PICKER_LAYOUT))
+def test_pickers_never_get_left_or_right():
+    # Verified live: both pickers stack profiles; on Netflix LEFT/RIGHT reach the edit pencil.
+    for layout in (config.NETFLIX_PICKER_LAYOUT, config.PRIME_PICKER_LAYOUT):
+        assert layout == "column"
+        for position in (1, 3, 4):
+            assert not {"LEFT", "RIGHT"} & set(tv.profile_keys(position, layout))
 
 
 def test_household_positions():
