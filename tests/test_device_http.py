@@ -83,6 +83,17 @@ def test_device_token_can_play_and_the_server_knows_who_asked():
     assert "play_title requested by mishika" in SERVER_LOG.read_text(encoding="utf-8")
 
 
+def test_the_token_picks_the_tv_profile_not_the_model():
+    # Dry run, so the TV is not touched; the result says which profile WOULD be used.
+    expected = {("mishika", "netflix"): 4, ("gaurav", "netflix"): 3,
+                ("mishika", "prime"): 3, ("gaurav", "prime"): 1}
+    ids = {"netflix": "82182295", "prime": "amzn1.dv.gti.0000-1111"}
+    for (user, service), position in expected.items():
+        token = keycloak_token(user, "openid device-mcp")
+        _, result = asyncio.run(call_with(token, "play_title", {"service": service, "content_id": ids[service]}))
+        assert result["profile"] == f"{user}'s profile (position {position})", (user, service, result)
+
+
 # ----------------------------------------------------------------- runners
 try:
     import pytest

@@ -78,7 +78,35 @@ PRIME_TITLE_WAIT = _int("PRIME_TITLE_WAIT", 8)              # profile chosen -> 
 PRIME_PRESS_PLAY = _bool("PRIME_PRESS_PLAY", False)
 
 # Keys that pick the Prime profile. Verified: the first ENTER picks the profile.
+# Used only when the person is unknown (stdio, or not in PRIME_PROFILES below).
 PRIME_PROFILE_KEYS = _list("PRIME_PROFILE_KEYS", "ENTER")
+
+
+# ---------------------------------------------------------------- Per-person profiles (Phase 2, Step 9)
+def _profiles(name: str, default: str) -> dict[str, int]:
+    """'gaurav:3,mishika:4' -> {'gaurav': 3, 'mishika': 4}. Positions count from 1, left to right."""
+    out = {}
+    for pair in _list(name, default):
+        user, _, pos = pair.partition(":")
+        if not pos.strip().isdigit() or int(pos) < 1:
+            sys.exit(f"Setting {name}: expected user:position pairs like gaurav:3, got {pair!r}.")
+        out[user.strip().lower()] = int(pos)
+    return out
+
+
+# Position of each person's profile on each app's picker (logged-in username -> position).
+NETFLIX_PROFILES = _profiles("NETFLIX_PROFILES", "gaurav:3,mishika:4")
+PRIME_PROFILES = _profiles("PRIME_PROFILES", "gaurav:1,mishika:3")
+# How each app's picker is laid out. Verified on this TV: Netflix stacks profiles in a COLUMN
+# (UP/DOWN move between them; LEFT/RIGHT reach the edit pencil, so never press them there).
+# Prime: assumed a ROW (LEFT/RIGHT), NOT yet verified.
+NETFLIX_PICKER_LAYOUT = os.environ.get("NETFLIX_PICKER_LAYOUT", "column")
+PRIME_PICKER_LAYOUT = os.environ.get("PRIME_PICKER_LAYOUT", "row")
+# The picker highlights the LAST USED profile, so we first move to the first profile
+# (UP or LEFT this many times), then DOWN/RIGHT (position - 1) times, then ENTER.
+PROFILE_RESET_PRESSES = _int("PROFILE_RESET_PRESSES", 5)
+# Measured: after a real close, Netflix took 22 s to show the picker (15 s was too short).
+NETFLIX_PICKER_WAIT = _int("NETFLIX_PICKER_WAIT", 25)
 
 # ---------------------------------------------------------------- Device server safety
 # While True, device_mcp.py never touches the TV: play_title only reports what it

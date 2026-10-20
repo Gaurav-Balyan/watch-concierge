@@ -19,7 +19,7 @@ import tv
 
 NAME = "prime"
 # Off by default: on a title page the focused button could be a rent/buy button,
-# so ENTER is never sent blind. Pass play=yes on the command line to opt in.
+# so ENTER is never sent blind. Turn on with PRIME_PRESS_PLAY=1 in .env.
 DEFAULT_PLAY = config.PRIME_PRESS_PLAY
 
 
@@ -35,12 +35,19 @@ async def start_at_picker(c: WebOsClient):
     await asyncio.sleep(config.PRIME_PICKER_WAIT)
 
 
-async def open_title(c: WebOsClient, gti: str, press_play: bool = DEFAULT_PLAY):
-    """Launch Prime, send the link at the profile picker, pick the profile."""
+async def open_title(c: WebOsClient, gti: str, press_play: bool = DEFAULT_PLAY,
+                     profile: int | None = None):
+    """Launch Prime, send the link at the profile picker, pick the profile.
+
+    profile=N picks the N-th profile (Phase 2); None keeps PRIME_PROFILE_KEYS (the highlighted one).
+    """
     await start_at_picker(c)
     await tv.send_link(c, config.PRIME_APP, to_gti(gti))
     await asyncio.sleep(config.PRIME_LINK_TO_KEY_WAIT)   # let the picker accept input
-    await tv.press(c, config.PRIME_PROFILE_KEYS)         # choose the profile
+    if profile is not None:
+        await tv.press(c, tv.profile_keys(profile, config.PRIME_PICKER_LAYOUT), gap=0.8)
+    else:
+        await tv.press(c, config.PRIME_PROFILE_KEYS)     # choose the highlighted profile
     await asyncio.sleep(config.PRIME_TITLE_WAIT)         # title page loads
     if press_play:
         await c.button("ENTER")

@@ -27,6 +27,8 @@ HTTP (Phase 2, Step 7): `python device_mcp.py --http` listens on 127.0.0.1:DEVIC
 and accepts only Keycloak tokens issued FOR device-mcp. A catalog-mcp token is refused
 with 401 before any TV code runs: the catalog side can never control the TV.
 Every play_title logs WHO asked (the token's user), the start of an audit trail.
+Step 9: that same user picks the TV profile (NETFLIX_PROFILES / PRIME_PROFILES in config).
+The model cannot choose the profile: it is not a tool argument.
 
 Run it on its own (it just waits for a client), or test with the probe:
     python mcp_probe.py device
@@ -64,6 +66,9 @@ mcp = MCPServer(
     ),
 )
 log = get_logger("device_mcp")   # see logs/device_mcp.log
+
+# Each person's profile position per app, chosen from the token's user (never from the model).
+PROFILES = {"netflix": config.NETFLIX_PROFILES, "prime": config.PRIME_PROFILES}
 
 ACTION_TIMEOUT = 240          # seconds: wake + app launch + profile + link can take a while
 _action_lock = asyncio.Lock()  # one TV action at a time
@@ -150,8 +155,12 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
             "Retrying with the same input will fail again."
         )
     svc = SERVICES[service]
-    log.info("play_title requested by %s: service=%s content_id=%s title=%r dry_run=%s",
-             caller_name(), service, content_id, title, config.DEVICE_DRY_RUN)
+    who = caller_name()
+    profile = PROFILES[service].get(who)        # None: unknown person -> highlighted profile
+    profile_note = (f"{who}'s profile (position {profile})" if profile
+                    else "the profile already highlighted (person unknown)")
+    log.info("play_title requested by %s: service=%s content_id=%s title=%r profile=%s dry_run=%s",
+             who, service, content_id, title, profile, config.DEVICE_DRY_RUN)
 
     # 2. DRY RUN: touch nothing.
     if config.DEVICE_DRY_RUN:
@@ -162,6 +171,7 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
             "service": service,
             "content_id": content_id,
             "title": title,
+            "profile": profile_note,
             "message": "Dry-run mode: no command was sent to the TV.",
         }
 
@@ -174,7 +184,7 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
 
     async with _action_lock:
         try:
-            await asyncio.wait_for(_open(svc, content_id), ACTION_TIMEOUT)
+            await asyncio.wait_for(_open(svc, content_id, profile), ACTION_TIMEOUT)
         except tv.TVUnreachable as e:
             log.error("play_title TV_UNREACHABLE: %s", e)
             raise ToolError(
@@ -202,6 +212,7 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
         "service": service,
         "content_id": content_id,
         "title": title,
+        "profile": profile_note,
         "pressed_play": pressed_play,
         "message": (
             f"Commands were sent to open the title on {service}"
@@ -221,7 +232,7 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
     return result
 
 
-async def _open(svc, content_id: str):
+async def _open(svc, content_id: str, profile: int | None = None):
     """Wake + connect + open the title, always disconnecting. All prints go to the log."""
     # The redirect must cover the WHOLE function, including the disconnect in
     # `finally`: a stray print there would also land on the protocol channel.
@@ -229,7 +240,9 @@ async def _open(svc, content_id: str):
         c = None
         try:
             c = await tv.connect_with_wake()
-            await svc.open_title(c, content_id, press_play=svc.DEFAULT_PLAY)
+            # Pass profile only when known, so older open_title fakes (evals) keep working.
+            extra = {"profile": profile} if profile else {}
+            await svc.open_title(c, content_id, press_play=svc.DEFAULT_PLAY, **extra)
         finally:
             if c is not None:
                 with contextlib.suppress(Exception):

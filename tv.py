@@ -55,6 +55,7 @@ async def connect_with_wake(max_wait: int = 90) -> WebOsClient:
         await asyncio.sleep(1)
 
     waited = 0
+    last_error = "none"
     while waited < max_wait:
         try:
             c = await asyncio.wait_for(connect(), 8)
@@ -63,10 +64,11 @@ async def connect_with_wake(max_wait: int = 90) -> WebOsClient:
             return c
         except Exception as e:  # noqa: BLE001
             waited += 10
-            print(f"  waiting for TV... ({waited}s) {type(e).__name__}")
+            last_error = f"{type(e).__name__}: {e}".rstrip(": ")
+            print(f"  waiting for TV... ({waited}s) {last_error}")
             send_wake()
             await asyncio.sleep(2)
-    raise TVUnreachable("TV did not come up after wake")
+    raise TVUnreachable(f"TV did not come up after wake (last error: {last_error})")
 
 
 async def ask(prompt: str) -> str:
@@ -95,6 +97,28 @@ async def press(c: WebOsClient, keys, gap: float = 1.5):
         print("  key:", key)
         await c.button(key)
         await asyncio.sleep(gap)
+
+
+def profile_keys(position: int, layout: str) -> list[str]:
+    """Keys that pick the profile at `position` (1 = first), whatever is highlighted now.
+
+    layout "column": profiles stacked, first at the top (UP/DOWN).
+    layout "row"   : profiles side by side, first on the left (LEFT/RIGHT).
+    """
+    back, forward = {"column": ("UP", "DOWN"), "row": ("LEFT", "RIGHT")}[layout]
+    return [back] * config.PROFILE_RESET_PRESSES + [forward] * (position - 1) + ["ENTER"]
+
+
+async def close_app(c: WebOsClient, app: str):
+    """Close an app whether or not it is in front (it may be running in the background).
+
+    UNVERIFIED on this TV: if close_app fails, we print a note and carry on.
+    """
+    try:
+        await c.close_app(app)
+    except Exception as e:  # noqa: BLE001
+        print("  close_app failed or app not running, continuing:", type(e).__name__, e)
+    await asyncio.sleep(3)
 
 
 async def close_app_if_open(c: WebOsClient, app: str):

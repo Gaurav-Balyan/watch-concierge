@@ -27,7 +27,7 @@ Each phase ends with a testable result, and each one de-risks the next. Phase 0 
 
 # Status (update as work proceeds)
 
-New chat? Read `HANDOFF.md` first: it has the current state and the Phase 2 starting point.
+New chat? Read `HANDOFF.md` first: it has the current state and the next starting point.
 
 ## Phase 0: DONE
 Findings on this LG TV (India):
@@ -107,7 +107,7 @@ Come back to these only if/when they matter. Defaults are what the assistant wou
 - Update case 10 to the "ask" policy (decided above) when convenient.
 - Then Phase 2 (identity and data): "who is asking" also fixes the first-profile-only limit on Prime/Netflix.
 
-## Phase 2: IN PROGRESS (identity and data)
+## Phase 2: STEPS 1-8 DONE, STEP 9 AWAITING LIVE CHECK (identity and data)
 Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev passwords `<name>-dev-pass`.
 - Step 1 DONE: Keycloak 26.0 in Docker, dev mode (HTTP, built-in DB; production needs HTTPS + Postgres).
   `docker run ... -v "${PWD}\keycloak:/opt/keycloak/data/import" quay.io/keycloak/keycloak:26.0 start-dev --import-realm`
@@ -157,15 +157,34 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   agent records only real plays. 50 tests total. Mutation-checked: with RLS off only the DB tests fail (the
   server layer holds alone); with the server's WHERE removed nothing fails (RLS holds alone: defence in depth).
   Learned: put the identity in the token, not the arguments; enforce twice; least-privilege DB role.
-- Step 9 NEXT: per-person TV profiles (device-mcp picks the profile of the person in the token).
-  Then Phase 2 is complete.
+- Step 9 BUILT, live debugging: per-person TV profiles. device-mcp maps the TOKEN's user to a profile position
+  (config NETFLIX_PROFILES gaurav:3,mishika:4; PRIME_PROFILES gaurav:1,mishika:3). The model cannot choose it.
+  First live run FAILED (nothing played). `profile_probe.py` (step-by-step, asks what the screen shows) found:
+  (1) close_app is unreliable: once 403 access denied, once OK; (2) after a real close the picker took 22 s
+  (wait was 15; now NETFLIX_PICKER_WAIT=25); (3) Netflix stacks profiles in a COLUMN: UP/DOWN move, LEFT/RIGHT
+  reach the edit pencil, so the first sequence (LEFT x5, RIGHT x3) put Gaurav in edit mode. Now keys are
+  UP x PROFILE_RESET_PRESSES (5), DOWN x (pos-1), ENTER for Netflix. Prime layout (row) still UNVERIFIED.
+  Also seen: relaunching a still-running Netflix (after a 403 close) brought up the picker in 13 s.
+  Learned: blind key sequences encode assumptions about a screen we cannot see; probe the real device step by
+  step before trusting them, and keep each assumption in config with a note saying whether it was verified.
+  `tests/test_profiles.py` (6, fake TV records keys) + `test_device_http` profile case. 57 tests total.
+- Phase 2 is COMPLETE once Step 9 passes live (Netflix as mishika while Netflix is open on another profile;
+  Prime as gaurav).
+
+## Parked from Phase 2 (eval work, one change at a time, measure with --compare)
+- 12b: "I don't like horror, and I love Christopher Nolan films" -> must produce TWO remember_taste calls; the
+  answer must not claim a preference with no matching call. Seen live: ONE call, answer claimed both (a false
+  claim: the trace is the truth, the answer is only a claim). Fix candidates: a prompt line, or remember_taste
+  accepting several items.
+- Taste tools are not in the evals yet (eval SERVERS are stdio catalog + device only).
 
 ## Phases 3-5: NOT STARTED
 
 ## Known fragile points carried forward
 - All waits are fixed sleeps, not checks (matters for Phase 4).
 - `close_app` untested on this TV.
-- Both flows press ENTER on the first profile; per-person profiles are a Phase 2+ concern.
+- Profiles are picked by position with blind key presses (no way to read the screen); if someone adds or
+  reorders profiles, update NETFLIX_PROFILES / PRIME_PROFILES. close_app on this TV is still unverified.
 - Access tokens last 5 min and the agent gets them at start: a run longer than that would get 401s mid-run
   (Phase 4: refresh and retry on 401).
 - Keycloak dev mode keeps its data inside the container: `docker rm` loses it (the realm file re-creates it).
