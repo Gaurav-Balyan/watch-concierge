@@ -34,7 +34,7 @@ import os
 import sys
 from contextlib import AsyncExitStack
 
-from groq import AsyncGroq, NotFoundError
+from groq import APIError, AsyncGroq, BadRequestError, NotFoundError
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
@@ -211,6 +211,17 @@ class McpToolbox:
 
 # ---------------------------------------------------------------- The agent loop
 
+def rejected_tool_call(e: BadRequestError) -> dict | None:
+    """If Groq refused the model's tool call (code tool_use_failed), return what and why; else None."""
+    body = e.body if isinstance(e.body, dict) else {}
+    err = body.get("error", body) if isinstance(body.get("error", body), dict) else {}
+    if err.get("code") != "tool_use_failed":
+        return None
+    reason = str(err.get("message", "the tool call did not match the tool's schema"))
+    reason = reason.replace("Tool call validation failed: tool call validation failed: ", "")
+    return {"reason": reason, "sent": " ".join(str(err.get("failed_generation", "?")).split())}
+
+
 async def record_watch_if_played(toolbox: "McpToolbox", args: dict, result_text: str):
     """After a real play (not a dry run), add it to the logged-in person's history."""
     if "record_watch" not in toolbox.routes:
@@ -241,13 +252,33 @@ async def run_agent(user_request: str, trace: list | None = None) -> str:
         print("Discovered tools:\n" + toolbox.describe())
 
         for turn in range(1, MAX_TURNS + 1):
-            response = await client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                tools=toolbox.tools,
-                tool_choice="auto",
-                max_tokens=1024,
-            )
+            try:
+                response = await client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    tools=toolbox.tools,
+                    tool_choice="auto",
+                    max_tokens=1024,
+                )
+            except BadRequestError as e:
+                rejected = rejected_tool_call(e)
+                if rejected is None:
+                    raise                      # a real request problem, not a model mistake
+                # Groq checked the model's arguments against the tool schema and refused them
+                # (e.g. "year": null). Nothing ran. Treat it like a failed tool call: tell the
+                # model exactly what was wrong and let it try again, within MAX_TURNS.
+                print(f"\n--- turn {turn}: Groq REJECTED the model's tool call (nothing ran)")
+                print(f"    model sent: {rejected['sent']}")
+                print(f"    reason    : {rejected['reason']}")
+                if trace is not None:
+                    trace.append({"tool": "(rejected by provider)", "args": {}, "result": rejected["reason"],
+                                  "is_error": True, "executed": False})
+                messages.append({"role": "user", "content": (
+                    "(system note) Your last tool call was rejected and NOT run: "
+                    f"{rejected['reason']} You sent: {rejected['sent']} "
+                    "Fix the arguments and call the tool again. Leave out optional arguments you "
+                    "do not have; never send null.")})
+                continue
             choice = response.choices[0]
             message = choice.message
             print(f"\n--- turn {turn}: finish_reason = {choice.finish_reason}")
@@ -332,6 +363,13 @@ async def list_models():
         print(m.id)
 
 
+def first_cause(exc: BaseException) -> BaseException:
+    """An error raised inside open MCP connections arrives wrapped in ExceptionGroups. Unwrap it."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -355,11 +393,16 @@ def main():
                  "and add GROQ_MODEL=<id> to .env.")
     try:
         answer = asyncio.run(run_agent(" ".join(sys.argv[1:])))
-    except login.LoginError as e:
-        sys.exit(f"Login problem: {e}")
-    except NotFoundError:
-        sys.exit(f"Groq says model '{MODEL}' is not available to your key. "
-                 "Run `python agent.py --models` and set GROQ_MODEL in .env.")
+    except BaseException as e:  # noqa: BLE001  unwrap first, then decide
+        cause = first_cause(e)
+        if isinstance(cause, login.LoginError):
+            sys.exit(f"Login problem: {cause}")
+        if isinstance(cause, NotFoundError):
+            sys.exit(f"Groq says model '{MODEL}' is not available to your key. "
+                     "Run `python agent.py --models` and set GROQ_MODEL in .env.")
+        if isinstance(cause, APIError):
+            sys.exit(f"Groq API error ({type(cause).__name__}): {cause}")
+        raise
     print("\n=== final answer ===\n" + answer)
 
 

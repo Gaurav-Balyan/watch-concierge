@@ -168,12 +168,25 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   step, and keep each assumption in config.py with a note saying whether it was verified.
   `tests/test_profiles.py` (6, fake TV records keys) + `test_device_http` profile case. 57 tests total.
 
+## After Phase 2: provider-rejected tool calls (2026-10-20)
+- Seen live: "The Grand Seduction" (no year) -> the model sent "year": null; GROQ validated the arguments against
+  the tool schema and answered HTTP 400 tool_use_failed; agent.py crashed (one real error, wrapped in many
+  ExceptionGroup layers by the open MCP HTTP connections).
+- Fix in agent.py: catch tool_use_failed in the loop, tell the model what was rejected and why ("never send
+  null"), let it retry within MAX_TURNS (same pattern as a failed tool call); other provider errors are NOT
+  swallowed. main() unwraps ExceptionGroups (`first_cause`) and prints one clear line for Groq API errors.
+  `tests/test_agent_recovery.py` (4, fake Groq replaying the real 400 body). Mutation-checked.
+  Learned: a model can fail at the PROVIDER boundary too, not only at the tool boundary; errors there arrive as
+  exceptions in your loop, not as tool results.
+
 ## Parked from Phase 2 (eval work, one change at a time, measure with --compare)
 - 12b: "I don't like horror, and I love Christopher Nolan films" -> must produce TWO remember_taste calls; the
   answer must not claim a preference with no matching call. Seen live: ONE call, answer claimed both (a false
   claim: the trace is the truth, the answer is only a claim). Fix candidates: a prompt line, or remember_taste
   accepting several items.
 - Taste tools are not in the evals yet (eval SERVERS are stdio catalog + device only).
+- Eval case: a request with no year ("The Grand Seduction") -> count provider rejections in the trace
+  (`(rejected by provider)`); the run must still end with a correct search_title.
 - `requested` is not `watched`: record_watch runs when commands were SENT, so a title blocked on the TV (seen:
   The Friend on Mishika's Kids profile, maturity rating) still lands in history. Phase 4/5: verify, or label
   history entries "requested".
