@@ -47,6 +47,9 @@ from mcp.shared._httpx_utils import create_mcp_http_client
 
 import config   # also loads .env, so GROQ_API_KEY is available
 import login
+import tracing
+from opentelemetry.trace import get_current_span as current_span
+from tracing import content, failed, set_attrs, span
 
 # No hard-coded default: model names come and go, so a stale default just breaks.
 MODEL = os.environ.get("GROQ_MODEL", "")
@@ -176,38 +179,49 @@ class McpToolbox:
         await self._stack.__aenter__()
         try:
             for name, target in self.servers.items():
-                if target.startswith(("http://", "https://")):
-                    # HTTP: this server gets a token whose audience is ONLY "<name>-mcp".
-                    # The same login cannot be replayed by this server against another one.
-                    token = login.access_token_for(f"{name}-mcp")
-                    http = await self._stack.enter_async_context(
-                        create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}))
-                    transport = streamable_http_client(target, http_client=http)
-                    self.transports[name] = f"http, as {login.load_login()['username']}"
-                else:
-                    transport = StdioServerParameters(
-                        command=sys.executable,
-                        args=[str(config.BASE_DIR / target)],
-                        cwd=str(config.BASE_DIR),
-                    )
-                    self.transports[name] = "stdio"
-                client = await self._stack.enter_async_context(Client(transport))
-                for t in (await client.list_tools()).tools:
-                    if t.name in self.routes:
-                        # Two servers claiming one name: one would silently shadow the other.
-                        raise RuntimeError(
-                            f"Tool name clash: '{t.name}' is offered by both "
-                            f"'{self.routes[t.name][0]}' and '{name}'. Refusing to start."
-                        )
-                    self.routes[t.name] = (name, client)
-                    ann = getattr(t, "annotations", None)
-                    self.read_only[t.name] = bool(ann and getattr(ann, "read_only_hint", False))
-                    if t.name not in AGENT_ONLY_TOOLS:
-                        self.tools.append(to_groq_tool(t))   # only these are shown to the model
+                await self._connect(name, target)
         except BaseException:
             await self._stack.aclose()
             raise
         return self
+
+    async def _connect(self, name: str, target: str):
+        with span(f"connect {name}", {"mcp.server": name}) as s:
+            if target.startswith(("http://", "https://")):
+                # HTTP: this server gets a token whose audience is ONLY "<name>-mcp".
+                # The same login cannot be replayed by this server against another one.
+                with span("keycloak token", {"keycloak.audience": f"{name}-mcp"}):   # never the token itself
+                    token = login.access_token_for(f"{name}-mcp")
+                http = await self._stack.enter_async_context(
+                    create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}))
+                transport = streamable_http_client(target, http_client=http)
+                user = login.load_login()["username"]
+                self.transports[name] = f"http, as {user}"
+                set_attrs(s, {"mcp.transport": "http", "enduser.id": user})
+            else:
+                transport = StdioServerParameters(
+                    command=sys.executable,
+                    args=[str(config.BASE_DIR / target)],
+                    cwd=str(config.BASE_DIR),
+                )
+                self.transports[name] = "stdio"
+                set_attrs(s, {"mcp.transport": "stdio"})
+            client = await self._stack.enter_async_context(Client(transport))
+            discovered = []
+            for t in (await client.list_tools()).tools:
+                if t.name in self.routes:
+                    # Two servers claiming one name: one would silently shadow the other.
+                    raise RuntimeError(
+                        f"Tool name clash: '{t.name}' is offered by both "
+                        f"'{self.routes[t.name][0]}' and '{name}'. Refusing to start."
+                    )
+                self.routes[t.name] = (name, client)
+                ann = getattr(t, "annotations", None)
+                self.read_only[t.name] = bool(ann and getattr(ann, "read_only_hint", False))
+                discovered.append(t.name)
+                if t.name not in AGENT_ONLY_TOOLS:
+                    self.tools.append(to_groq_tool(t))   # only these are shown to the model
+            set_attrs(s, {"mcp.tools": discovered})
 
     async def __aexit__(self, *exc):
         return await self._stack.__aexit__(*exc)
@@ -312,11 +326,14 @@ class Agent:
 
     async def run(self, request: str, trace: list | None = None) -> str:
         """Open THIS agent's servers (with tokens for those servers only), then run the loop."""
-        async with McpToolbox(self.servers) as toolbox:
-            for tool in self.local_tools:
-                toolbox.add_local(tool)
-            print(f"[{self.name}] discovered tools:\n" + toolbox.describe())
-            return await self.loop(toolbox, request, trace)
+        with span(f"agent {self.name}", {"gen_ai.operation.name": "invoke_agent",
+                                         "gen_ai.agent.name": self.name,
+                                         "agent.servers": list(self.servers)}):
+            async with McpToolbox(self.servers) as toolbox:
+                for tool in self.local_tools:
+                    toolbox.add_local(tool)
+                print(f"[{self.name}] discovered tools:\n" + toolbox.describe())
+                return await self.loop(toolbox, request, trace)
 
     async def loop(self, toolbox: McpToolbox, request: str, trace: list | None = None) -> str:
         """The tool-use loop. If `trace` is a list, every tool call is appended to it as a dict."""
@@ -331,13 +348,28 @@ class Agent:
 
         for turn in range(1, max_turns + 1):
             try:
-                response = await client.chat.completions.create(
-                    model=MODEL,
-                    messages=messages,
-                    tools=toolbox.tools,
-                    tool_choice="auto",
-                    max_tokens=1024,
-                )
+                with span(f"chat {MODEL}", {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "groq",
+                                            "gen_ai.request.model": MODEL, "gen_ai.agent.name": self.name,
+                                            "agent.turn": turn,
+                                            "gen_ai.request.tools": [t["function"]["name"] for t in toolbox.tools]}
+                          ) as chat_span:
+                    try:
+                        response = await client.chat.completions.create(
+                            model=MODEL,
+                            messages=messages,
+                            tools=toolbox.tools,
+                            tool_choice="auto",
+                            max_tokens=1024,
+                        )
+                    except BadRequestError as e:
+                        failed(chat_span, "rejected by provider")
+                        set_attrs(chat_span, {"provider.rejected": rejected_tool_call(e) is not None})
+                        raise
+                    usage = getattr(response, "usage", None)
+                    set_attrs(chat_span, {
+                        "gen_ai.response.finish_reasons": [str(response.choices[0].finish_reason)],
+                        "gen_ai.usage.input_tokens": getattr(usage, "prompt_tokens", None),
+                        "gen_ai.usage.output_tokens": getattr(usage, "completion_tokens", None)})
             except BadRequestError as e:
                 rejected = rejected_tool_call(e)
                 if rejected is None:
@@ -365,6 +397,7 @@ class Agent:
 
             tool_calls = message.tool_calls or []
             if not tool_calls:
+                current_span().set_attribute("agent.outcome", f"answered after {turn} turns")
                 return message.content or ""     # no tool requested: finished
 
             messages.append({
@@ -393,24 +426,34 @@ class Agent:
 
                 key = (name, json.dumps(args, sort_keys=True))
                 executed, is_error = False, True      # True/False: did the call really reach a server
-                if parse_error:
-                    result = parse_error
-                elif name in AGENT_ONLY_TOOLS:
-                    result = f"Unknown tool: {name}"   # the model was never offered it
-                elif seen_calls.get(key) == "error":
-                    # The model repeated a call that already failed: don't run it again.
-                    result = ("BLOCKED: this exact call already failed in this request. "
-                              "Do not repeat it; explain the problem to the user.")
-                elif seen_calls.get(key) == "ok" and not toolbox.read_only.get(name, False):
-                    # An action that already succeeded: running it again could launch it twice.
-                    result = ("BLOCKED: this action already ran in this request and was not repeated. "
-                              "Tell the user what was done.")
-                else:
-                    result, is_error = await toolbox.call(name, args)
-                    executed = True
-                    seen_calls[key] = "error" if is_error else "ok"
-                    if self.after_tool and not is_error:
-                        await self.after_tool(toolbox, name, args, result)
+                blocked = None
+                with span(f"execute_tool {name}", {"gen_ai.operation.name": "execute_tool",
+                                                   "gen_ai.tool.name": name, "gen_ai.agent.name": self.name,
+                                                   "mcp.server": server, "tool.args": args}) as tool_span:
+                    if parse_error:
+                        result, blocked = parse_error, "unparsable arguments"
+                    elif name in AGENT_ONLY_TOOLS:
+                        result, blocked = f"Unknown tool: {name}", "agent-only tool"   # never offered
+                    elif seen_calls.get(key) == "error":
+                        # The model repeated a call that already failed: don't run it again.
+                        result = ("BLOCKED: this exact call already failed in this request. "
+                                  "Do not repeat it; explain the problem to the user.")
+                        blocked = "repeat of a failed call"
+                    elif seen_calls.get(key) == "ok" and not toolbox.read_only.get(name, False):
+                        # An action that already succeeded: running it again could launch it twice.
+                        result = ("BLOCKED: this action already ran in this request and was not repeated. "
+                                  "Tell the user what was done.")
+                        blocked = "repeat of an action"
+                    else:
+                        result, is_error = await toolbox.call(name, args)   # a nested agent runs IN here
+                        executed = True
+                        seen_calls[key] = "error" if is_error else "ok"
+                        if self.after_tool and not is_error:
+                            await self.after_tool(toolbox, name, args, result)
+                    set_attrs(tool_span, {"tool.executed": executed, "tool.is_error": is_error,
+                                          "tool.blocked": blocked, "tool.result": content(result)})
+                    if is_error:
+                        failed(tool_span, result)
 
                 shown = " ".join(result.split())
                 shown = shown if len(shown) < 600 else shown[:600] + "..."
@@ -420,6 +463,7 @@ class Agent:
                                   "is_error": is_error, "executed": executed, "agent": self.name})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
+        current_span().set_attribute("agent.outcome", "STOPPED at max_turns")
         return f"Stopped after {max_turns} turns without a final answer."
 
 
@@ -480,9 +524,11 @@ def main():
     if not MODEL:
         sys.exit("GROQ_MODEL is not set. Run `python agent.py --models`, pick a model, "
                  "and add GROQ_MODEL=<id> to .env.")
+    tracing.setup("watch-concierge (single agent)")
     try:
         answer = asyncio.run(run_agent(" ".join(sys.argv[1:])))
     except BaseException as e:  # noqa: BLE001  unwrap first, then decide
+        tracing.finish()
         cause = first_cause(e)
         if isinstance(cause, login.LoginError):
             sys.exit(f"Login problem: {cause}")
@@ -493,6 +539,7 @@ def main():
             sys.exit(f"Groq API error ({type(cause).__name__}): {cause}")
         raise
     print("\n=== final answer ===\n" + answer)
+    tracing.finish()
 
 
 if __name__ == "__main__":

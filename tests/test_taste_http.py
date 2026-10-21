@@ -43,8 +43,24 @@ def need_db():
         raise Skip(f"Postgres test database not reachable ({str(e).strip().splitlines()[0]})")
 
 
+# The superuser, for test SETUP only (the server itself always connects as taste_app).
+ADMIN_TEST_DB_URL = "postgresql://postgres:postgres-dev-pass@127.0.0.1:5433/household_test"
+
+
+def reset_test_taste():
+    """Empty taste_items in the TEST database, so old runs never fill a person's 50-item limit.
+    watch_history is left alone: it has no limit, and nothing may delete it (by design)."""
+    assert ADMIN_TEST_DB_URL.endswith("/household_test"), "refusing to reset anything but the test database"
+    try:
+        with psycopg.connect(ADMIN_TEST_DB_URL, connect_timeout=3) as conn:
+            conn.execute("DELETE FROM taste_items")
+    except psycopg.OperationalError as e:
+        raise Skip(f"Postgres test database not reachable as admin ({str(e).strip().splitlines()[0]})")
+
+
 def taste_server():
     need_db()
+    reset_test_taste()
     return http_server("taste_mcp.py", config.TASTE_MCP_PORT, SERVER_LOG, {"TASTE_DB_URL": TEST_DB_URL})
 
 

@@ -30,6 +30,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 import config
+import tracing
 from auth import McpTokenVerifier
 
 AUDIENCE = "taste-mcp"
@@ -75,7 +76,9 @@ def _run(user_id: str, work):
 
 async def in_db(user_id: str, work):
     # psycopg's sync API in a worker thread: works on every OS and event loop.
-    return await anyio.to_thread.run_sync(_run, user_id, work)
+    with tracing.span("postgres transaction (row-level security)",
+                      {"db.system": "postgresql", "db.user": "taste_app", "app.user_id": user_id}):
+        return await anyio.to_thread.run_sync(_run, user_id, work)
 
 
 def _clean_item(item: str) -> str:
@@ -190,6 +193,7 @@ async def record_watch(title: str, service: Literal["netflix", "prime"], content
 if __name__ == "__main__":
     if "--http" not in sys.argv:
         sys.exit("taste_mcp.py only runs over HTTP (it needs to know who is asking): python taste_mcp.py --http")
+    tracing.setup("taste-mcp", allow_print=False)
     print(f"taste-mcp starting on http://127.0.0.1:{config.TASTE_MCP_PORT}/mcp "
           f"(tokens from {config.OIDC_ISSUER})", file=sys.stderr)
     mcp.run(transport="streamable-http", host="127.0.0.1", port=config.TASTE_MCP_PORT)

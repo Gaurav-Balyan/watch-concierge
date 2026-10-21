@@ -47,6 +47,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 import config
+import tracing
 import tv
 from auth import McpTokenVerifier, caller_name
 from logsetup import LogStream, get_logger
@@ -161,6 +162,8 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
                     else "the profile already highlighted (person unknown)")
     log.info("play_title requested by %s: service=%s content_id=%s title=%r profile=%s dry_run=%s",
              who, service, content_id, title, profile, config.DEVICE_DRY_RUN)
+    tracing.set_attrs(tracing.trace.get_current_span(), {      # the SDK's own "tools/call" span
+        "enduser.id": who, "tv.profile": profile, "tv.dry_run": config.DEVICE_DRY_RUN})
 
     # 2. DRY RUN: touch nothing.
     if config.DEVICE_DRY_RUN:
@@ -239,10 +242,14 @@ async def _open(svc, content_id: str, profile: int | None = None):
     with stdout_to_log():
         c = None
         try:
-            c = await tv.connect_with_wake()
+            with tracing.span("tv connect (wake if needed)"):
+                c = await tv.connect_with_wake()
             # Pass profile only when known, so older open_title fakes (evals) keep working.
             extra = {"profile": profile} if profile else {}
-            await svc.open_title(c, content_id, press_play=svc.DEFAULT_PLAY, **extra)
+            with tracing.span(f"tv open title ({getattr(svc, 'NAME', 'service')})",
+                              {"tv.profile": profile, "tv.press_play": bool(svc.DEFAULT_PLAY),
+                               "note": "includes the fixed waits (picker, title page)"}):
+                await svc.open_title(c, content_id, press_play=svc.DEFAULT_PLAY, **extra)
         finally:
             if c is not None:
                 with contextlib.suppress(Exception):
@@ -253,6 +260,7 @@ if __name__ == "__main__":
     config.require("TV_IP")
     config.require("TV_MAC")
     mode = "DRY RUN (TV is never touched)" if config.DEVICE_DRY_RUN else "LIVE (will control the TV)"
+    tracing.setup("device-mcp", allow_print=False)
     if "--http" in sys.argv:
         log.info("device-mcp starting on http://127.0.0.1:%s/mcp: %s (tokens from %s)",
                  config.DEVICE_MCP_PORT, mode, config.OIDC_ISSUER)

@@ -41,6 +41,7 @@ import sys
 import agent
 import config
 import login
+import tracing
 
 CATALOG_SYSTEM = (
     "You are the Catalog agent of a household TV concierge in India. "
@@ -73,7 +74,10 @@ TASTE_SYSTEM = (
     "dislike 'horror', like 'Christopher Nolan'). To remove one call forget_taste. To read them call "
     "get_my_taste. You cannot search titles or play anything. "
     "Then answer in one or two sentences saying exactly what the tools did. Never say something was "
-    "saved or removed unless a tool call for it succeeded."
+    "saved or removed unless a tool call for it succeeded. "
+    "Your answer is read by another agent that CANNOT see your tool results, only your answer: "
+    "include every fact it needs (for a read: the likes, the dislikes and the recently watched titles), "
+    "and never write 'listed above' or 'see the result'."
 )
 
 CATALOG_MAX_TURNS = 4   # the Catalog agent's OWN budget, separate from the Supervisor's
@@ -105,6 +109,8 @@ def ask_agent_tool(name: str, owner: str, make_agent, description: str, example:
         if not question:
             raise ValueError("question is empty")
         print(f"\n    >>> handing over to the {owner}: {question!r}")
+        # No span code here: we are already inside the Supervisor's "execute_tool ask_..." span,
+        # and the context (a contextvar) flows into this await, so the specialist's spans nest under it.
         answer = await make_agent().run(question, trace)    # a whole agent run, nested
         print(f"    <<< back to the Supervisor with: {' '.join(answer.split())[:300]}")
         return answer
@@ -145,8 +151,10 @@ async def record_watch_after_play(_supervisor_box, name: str, args: dict, result
             return                                    # dry run or failure: no connection at all
     except json.JSONDecodeError:
         return
-    async with agent.McpToolbox({"taste": agent.SERVERS["taste"]}) as taste_box:
-        await agent.record_watch_if_played(taste_box, args, result_text)
+    with tracing.span("recorder record_watch", {"recorder.reason": "real play (status requested)",
+                                                "tool.args": {"title": args.get("title")}}):
+        async with agent.McpToolbox({"taste": agent.SERVERS["taste"]}) as taste_box:
+            await agent.record_watch_if_played(taste_box, args, result_text)
 
 
 SUPERVISOR_TASTE_LINE = (
@@ -194,8 +202,10 @@ def main():
         config.require("GROQ_API_KEY")
         if not agent.MODEL:
             sys.exit("GROQ_MODEL is not set (see `python agent.py --models`).")
+        tracing.setup("watch-concierge (team)")
         answer = asyncio.run(run_team(" ".join(sys.argv[1:])))
     except BaseException as e:  # noqa: BLE001
+        tracing.finish()
         cause = agent.first_cause(e)
         if isinstance(cause, login.LoginError):
             sys.exit(f"Login problem: {cause}")
@@ -203,6 +213,7 @@ def main():
             sys.exit(f"Groq API error ({type(cause).__name__}): {cause}")
         raise
     print("\n=== final answer ===\n" + answer)
+    tracing.finish()
 
 
 if __name__ == "__main__":

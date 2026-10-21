@@ -41,6 +41,7 @@ from mcp.types import ToolAnnotations
 
 import config
 import lookup
+import tracing
 from auth import McpTokenVerifier
 
 AUDIENCE = "catalog-mcp"   # this server's name in Keycloak (a client scope in household-realm.json)
@@ -102,6 +103,7 @@ async def search_title(title: str, year: str | None = None) -> dict:
 
 if __name__ == "__main__":
     config.require("RAPIDAPI_KEY")   # fail fast with a clear message on stderr
+    tracing.setup("catalog-mcp", allow_print=False)
     if "--http" in sys.argv:
         print(f"catalog-mcp starting on http://127.0.0.1:{config.CATALOG_MCP_PORT}/mcp "
               f"(tokens from {config.OIDC_ISSUER})", file=sys.stderr)

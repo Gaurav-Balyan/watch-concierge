@@ -16,7 +16,9 @@ conda activate watch-concierge
 | `device_mcp.py --http` | `tv_status`, `play_title`: controls the TV | its own window | 8002 |
 | `taste_mcp.py --http` | `get_my_taste`, `remember_taste`, … | its own window | 8003 |
 | `login.py` | Signs one person in (browser), keeps the login in `.login.json` | when needed | 8765 (briefly) |
-| `agent.py` | The concierge: you type a request, it uses the servers | your window | |
+| `agent.py` | The single-agent concierge: you type a request, it uses the servers | your window | |
+| `multi_agent.py` | The team (Phase 3): Supervisor + Catalog agent + Taste agent | your window | |
+| Jaeger (optional) | Shows traces: who did what, how long it took | Docker container `jaeger` | 16686 (UI), 4318 |
 
 There are two ways to run the agent:
 - **Full mode** (everything over HTTP, with login): per-person data and TV profiles. This guide's default.
@@ -91,6 +93,12 @@ docker exec household-db psql -U postgres -d household -c "\dt"     # lists tast
 irm http://localhost:8080/realms/household/.well-known/openid-configuration | select issuer
 ```
 
+**Jaeger (optional, for tracing).** Only needed if you set `TRACING=jaeger` (see 2.6).
+```powershell
+docker run -d --name jaeger -p 16686:16686 -p 4318:4318 cr.jaegertracing.io/jaegertracing/jaeger:2.22.0
+```
+Check: open http://localhost:16686 (the Jaeger page loads). Traces are kept in memory: `docker rm` clears them.
+
 ### 1.6 First login
 ```powershell
 python login.py
@@ -126,6 +134,12 @@ python agent.py "I don't like horror"
 python agent.py "what do you know about my taste?"
 python agent.py "is the TV on?"
 ```
+The same requests through the team (Phase 3). Each agent's lines are tagged `[supervisor]`, `[catalog]`, `[taste]`:
+```powershell
+python multi_agent.py --tools                              # each agent's toolbox: no overlap
+python multi_agent.py "play The Friend 2025"
+python multi_agent.py "I don't like horror, and I love Christopher Nolan films"
+```
 The TV uses the logged-in person's profile (Netflix: Gaurav 3, Mishika 4; Prime: Gaurav 1, Mishika 3).
 Mishika's Netflix profile is a Kids profile, so Netflix blocks mature titles there.
 
@@ -138,11 +152,21 @@ python login.py                # sign in as the other person
 ### 2.5 Stop
 Close the three server windows (or press Ctrl+C in each), then:
 ```powershell
-docker stop keycloak household-db
+docker stop keycloak household-db jaeger
 ```
 Your data stays. `docker start` brings it back.
 
 ---
+
+### 2.6 Tracing (optional)
+Add to `.env` (then restart the three servers so they read it):
+```
+TRACING=print,jaeger
+```
+- `print`: after each run the agent prints the span tree (who did what, nested, with durations).
+- `jaeger`: the agent AND the servers send spans to Jaeger (`docker start jaeger`). One request = one trace,
+  across processes: open http://localhost:16686, pick the service `watch-concierge (team)`, then **Find Traces**.
+- Leave `TRACING` empty to turn tracing off. Tokens are never recorded. Tool results only with `TRACE_CONTENT=1`.
 
 ## 3. Quick mode (no Docker, no login)
 Comment out the three `*_MCP_URL` lines in `.env`, then run `python agent.py "play The Friend 2025"`. The agent starts
@@ -152,7 +176,9 @@ The non-agent CLI also works without anything running: `python cli.py watch "The
 ---
 
 ## 4. Tests and evals
-Full suite (Keycloak and Postgres running; the servers are started by the tests themselves, in DRY RUN):
+Full suite (Keycloak and Postgres running; the servers are started by the tests themselves, in DRY RUN).
+**Close your three server windows first**: the tests start their own copies on the same ports (using the test
+database), and stop with `Port 800x is already in use` if yours are running.
 ```powershell
 python tests\test_auth.py          # 17  tokens: audience, expiry, forged and edited tokens
 python tests\test_catalog_http.py  #  6  catalog refuses wrong tokens
@@ -161,8 +187,13 @@ python tests\test_device_http.py   #  6  a catalog token cannot control the TV; 
 python tests\test_taste_http.py    # 13  Mishika cannot read Gaurav's data (server + database)
 python tests\test_profiles.py      #  6  offline: exact TV key presses per person
 python tests\test_agent_recovery.py #  4  offline: Groq-rejected tool calls do not crash the agent
+python tests\test_agent_loop.py     #  7  offline: record_watch is wired in by code, never by the model
+python tests\test_multi_agent.py    # 11  the team: handoffs, each agent's tools and tokens, whose taste
+python tests\test_tracing.py        #  7  spans: one trace per request, nesting, no tokens in spans
 ```
-Or all at once: `pytest tests` (after `pip install pytest`). If Keycloak or Postgres is down, those tests show SKIP.
+Or all at once: `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
+not plain `pytest`: plain `pytest` can pick up Anaconda's base Python, which has none of the project's
+packages (`No module named 'groq'`). If Keycloak or Postgres is down, those tests show SKIP.
 
 Evals (quick mode, real Groq model, fake TV and catalog):
 ```powershell
@@ -179,12 +210,14 @@ python evals\run_evals.py --compare evals\results\<a>.json evals\results\<b>.jso
 | `Login problem: Nobody is logged in` | Run `python login.py`. |
 | `Login problem: ... has expired or was ended` | The login timed out (1 day idle). Run `python login.py`. |
 | `Keycloak not reachable` / tests SKIP | `docker start keycloak`, wait about 20 s. |
+| `No module named 'groq'` (or `mcp`) under pytest | Plain `pytest` ran from Anaconda base. Use `python -m pytest tests` in the `watch-concierge` env. |
 | `Port 800x is already in use` | That server is already running in another window. Close it or reuse it. |
 | `relation "taste_items" does not exist` | The DB setup didn't run. `docker rm -f household-db; docker volume rm household-db-data`, then 1.5 again. **This deletes taste data.** |
 | `NOT_LOGGED_IN` from a taste tool | Taste only works over HTTP. Set `TASTE_MCP_URL` and start `taste_mcp.py --http`. |
 | `"profile": "... (person unknown)"` | The device server ran over stdio (no token). Set `DEVICE_MCP_URL` and start `device_mcp.py --http`. |
 | Wrong Netflix/Prime profile | Watch `python profile_probe.py` step by step (stop `device_mcp.py` first). Positions are in `config.py` (`NETFLIX_PROFILES`, `PRIME_PROFILES`). |
 | Picker keys pressed too early | Raise `NETFLIX_PICKER_WAIT` (default 25) or `PRIME_LINK_TO_KEY_WAIT` in `.env`. |
+| `tracing: could NOT reach http://localhost:4318` | Jaeger is not running: `docker start jaeger` (or run the 1.5 command). |
 | `Groq REJECTED the model's tool call` | Normal. The model sent bad arguments; the agent tells it why and it retries. |
 | `TV_UNREACHABLE` | The TV is off or asleep beyond wake-on-LAN, or `TV_IP` is wrong. Check `logs\device_mcp.log`. |
 | Nothing happens on the TV, result says `dry_run` | `DEVICE_DRY_RUN=1` in `.env`. Set `0`, then restart `device_mcp.py`. |

@@ -180,6 +180,9 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   exceptions in your loop, not as tool results.
 
 ## Parked from Phase 3 (come back later)
+- Tracing: start-concierge.ps1 does not start Jaeger yet. Server-side spans for each fixed wait inside
+  services/netflix.py and prime.py (today one "tv open title" span covers them all) would show exactly where
+  the ~50 s of a Netflix run go: useful input for Phase 4 (replace fixed sleeps with checks).
 - LangGraph (decided 2026-10-20): NOT in Phase 3's main steps. Optional at the end of Phase 3: rebuild the same
   Supervisor/specialist flow as a LangGraph graph and run the same tests (what a framework gives vs hides).
   Otherwise adopt it in Phase 4 as the durable workflow engine (checkpointing). Check first that LangGraph's
@@ -235,7 +238,8 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   said "Playback was NOT verified", and it invented "your living-room TV". Same honesty lines as the concierge's
   prompt. One run is an anecdote, not a rate: the evals only run the single concierge today. Parked: let the
   eval runner run the team (multi_agent.run_team) and compare case 11 + a "no invented details" check for both.
-- Step 3 DONE (sandbox; user's live run pending): Taste agent in `multi_agent.py` (only taste-mcp, own prompt:
+- Step 3 DONE (verified live 2026-10-20 as gaurav: two remember_taste calls for two preferences, answer claimed
+  exactly those; taste read went Supervisor -> Taste agent -> get_my_taste): Taste agent in `multi_agent.py` (only taste-mcp, own prompt:
   ONE remember_taste call PER ITEM, never claim a save without a successful call; 5-turn budget). Supervisor now
   has ONLY device-mcp + `ask_catalog_agent` + `ask_taste_agent` (the taste bridge and its prompt line exist only
   when TASTE_MCP_URL is set). The bridge is generic: `ask_agent_tool(...)`. record_watch: a code-only RECORDER
@@ -251,8 +255,36 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   Known: inside ONE process, the separation is between MODELS (what each can trigger), not between code; and
   a taste-mcp token can call any taste tool (record_watch is only hidden). Per-tool scopes or separate
   processes (A2A) would make it real at the network level.
-- Next: OpenTelemetry tracing (who did what, across agents), then Consensus (decide how a second person is
-  identified).
+- Step 4 DONE (sandbox, incl. real Jaeger 2.22.0; user's live run pending): OpenTelemetry tracing.
+  `tracing.py`: setup()/finish(), span() helper, a printed span tree (TRACING=print) and OTLP export to Jaeger
+  (TRACING=jaeger; OTLP_ENDPOINT default http://localhost:4318). Spans: agent <name> (outcome), connect <server>
+  (+ keycloak token: audience only, never the token; enduser.id), chat <model> (agent, turn, tools OFFERED,
+  finish reason, token usage), execute_tool <name> (args, executed, blocked reason, error status; results only
+  with TRACE_CONTENT=1), recorder record_watch. Servers: setup(allow_print=False) (stdout is the stdio protocol)
+  + spans in device-mcp (tv connect, tv open title incl. the fixed waits) and taste-mcp (postgres transaction).
+  FOUND: mcp 2.3.0 already creates OpenTelemetry spans ("MCP send tools/call ...") AND injects W3C traceparent
+  into each request's _meta (SEP-414); its servers extract it. So one request = ONE trace across processes
+  (verified in Jaeger: agent supervisor > execute_tool play_title > MCP send > device-mcp: tools/call play_title).
+  Honesty fix: finish() says "spans sent" only if the export succeeded, else "could NOT reach ... spans lost".
+  `tests/test_tracing.py` (7): one trace per request, specialist nested inside the bridge span, each chat records
+  which tools it was offered, blocked calls visible, outcome recorded, no token in any attribute, results only
+  on request. 86 tests total. Mutation-checked (empty context in the bridge; token in a span; results always
+  recorded; blocked reason dropped). Tracing off by default: all older tests unchanged.
+  Learned: span, parent, trace id, attributes, exporter; context = a contextvar that asyncio carries into awaited
+  code (why nested agents need no span plumbing); propagation across processes = traceparent in the message;
+  a trace is data leaving the process (no tokens, no personal results by default).
+- Step 4 verified live 2026-10-21 (gaurav, 3 requests, printed tree + Jaeger). Seen in the trace: a play took
+  45.9 s, of which play_title 39.3 s ended in TV_UNREACHABLE ("did not come up after wake"): the Phase 1 OPEN
+  item recurred; Jaeger's device-mcp span "tv connect (wake if needed)" shows where the time went.
+  Correction: "living-room TV" was NOT invented: play_title's description says "Open a title on the living-room
+  TV" (server-supplied text reaches the model's prompt, Phase 1 lesson).
+  Fixed: the Taste agent answered the Supervisor "your recent watches are listed above", but the Supervisor never
+  sees a specialist's tool results, so the user got no list. Taste prompt now says its reader sees ONLY its
+  answer (include every fact; never "listed above"). Test fix: the test database kept every run's
+  taste rows, so Gaurav hit the 50-likes LIMIT and a test failed; taste_server() now empties taste_items in
+  household_test (admin, guarded to that DB only) before each start. Learned: a handoff answer must be self-contained; state
+  in the specialist's prompt WHO reads its answer and what they can see. Printed tree: shorter error text.
+- Next: Consensus (decide how a second person is identified), then team evals, then HANDOFF/SETUP docs.
 
 ## Phases 4-5: NOT STARTED
 

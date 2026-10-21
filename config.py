@@ -130,3 +130,12 @@ TASTE_MCP_PORT = _int("TASTE_MCP_PORT", 8003)
 TASTE_MCP_URL = os.environ.get("TASTE_MCP_URL", "")
 # taste_mcp.py connects as the limited role taste_app (see db/01_init.sql), never as the superuser.
 TASTE_DB_URL = os.environ.get("TASTE_DB_URL", "postgresql://taste_app:taste-dev-pass@127.0.0.1:5433/household")
+
+# --- Phase 3, Step 4: OpenTelemetry tracing (see tracing.py) ---
+# TRACING: empty = off (default). "print" = span tree printed after each run. "jaeger" = send to Jaeger.
+# "print,jaeger" = both.
+TRACING = _list("TRACING", "")
+# Where Jaeger (or any OpenTelemetry collector) listens for OTLP over HTTP.
+OTLP_ENDPOINT = os.environ.get("OTLP_ENDPOINT", "http://localhost:4318")
+# 1 = also put tool RESULTS in spans (they can hold personal data, e.g. watch history). Args are always kept.
+TRACE_CONTENT = _bool("TRACE_CONTENT", False)
