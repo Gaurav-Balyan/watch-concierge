@@ -38,7 +38,7 @@ Findings on this LG TV (India):
 - Availability data (Streaming Availability API, country `in`) returned correct Netflix and Prime links for the titles tried. NOT yet tested at scale: accuracy across many titles, series/episode IDs, and rate limits. Series carry `firstAirYear`, not `releaseYear`.
 - Scope grew beyond the original assumption: Prime and YouTube were also spiked.
 
-## Phase 1: IN PROGRESS (agent: Groq, plain tool-use loop, no framework)
+## Phase 1: DONE (agent: Groq, plain tool-use loop, no framework)
 - Step 1 DONE: hand-written agent loop (`agent.py`), dry-run tools, visible trace.
   Learned: tool results steer the model; a tool result is also an injection channel (Phase 5).
 - Step 2 DONE: `catalog_mcp.py` (MCP server, stdio) + `mcp_probe.py` (model-free client).
@@ -49,7 +49,7 @@ Findings on this LG TV (India):
   Dry run by default (DEVICE_DRY_RUN), input validation, honest results (verified=False),
   classified failures (TV_UNREACHABLE / TIMEOUT / UNKNOWN_STATE say whether to retry),
   one action at a time, stdout kept clean for the protocol.
-- Step 4 BUILT, awaiting user's run: `agent.py` now has NO tool code. `McpToolbox` starts both
+- Step 4 DONE: `agent.py` now has NO tool code. `McpToolbox` starts both
   servers, discovers tools, routes calls; refuses to start on a tool-name clash; adapts MCP JSON
   Schema for Groq (`simplify_schema`); blocks an identical failed call and a repeated action
   (uses the read_only annotation). `python agent.py --tools` shows what was discovered.
@@ -179,6 +179,20 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   Learned: a model can fail at the PROVIDER boundary too, not only at the tool boundary; errors there arrive as
   exceptions in your loop, not as tool results.
 
+## Parked from Phase 3 (come back later)
+- LangGraph (decided 2026-10-20): NOT in Phase 3's main steps. Optional at the end of Phase 3: rebuild the same
+  Supervisor/specialist flow as a LangGraph graph and run the same tests (what a framework gives vs hides).
+  Otherwise adopt it in Phase 4 as the durable workflow engine (checkpointing). Check first that LangGraph's
+  MCP adapter supports mcp 2.x (2.x renamed APIs; we are on 2.3.0). Groq via the LangChain Groq integration.
+- A2A (decided 2026-10-20): keep agent-to-agent calls as in-process Python functions for Phase 3. Later
+  (Phase 4 or 5): put the Catalog agent behind A2A (spec 1.0, Linux Foundation): Agent Card for discovery,
+  Keycloak token with audience catalog-agent, Send Message -> Task (WORKING / COMPLETED / FAILED /
+  INPUT_REQUIRED ...), streaming or push for long tasks. The concept to learn: two identities per request
+  (the calling agent AND the person) -> OAuth token exchange ("Supervisor on behalf of gaurav, for
+  catalog-agent only"), plus network failures, timeouts and retries between agents.
+- Phase 5 check: a content_id passed to play_title must have come from a real search_title result
+  (today it passes through the Catalog model's text and the Supervisor model's arguments).
+
 ## Parked from Phase 2 (eval work, one change at a time, measure with --compare)
 - 12b: "I don't like horror, and I love Christopher Nolan films" -> must produce TWO remember_taste calls; the
   answer must not claim a preference with no matching call. Seen live: ONE call, answer claimed both (a false
@@ -197,13 +211,56 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   TV used the highlighted (gaurav) profile. Default: run all servers over HTTP when logged in, or have the agent
   refuse a TV action over stdio while a login is active.
 
-## Phases 3-5: NOT STARTED
+## Phase 3: IN PROGRESS (multi-agent orchestration, hand-written, no framework)
+- Step 1 DONE: the loop moved from run_agent() into a reusable `Agent(name, system, servers, after_tool=...)`
+  in `agent.py`. `concierge()` builds the old all-in-one agent, so run_agent(), evals and tests are unchanged
+  (system prompt hash identical). record_watch is now the concierge's `after_tool` hook. Trace lines and trace
+  entries carry the agent's name. `tests/test_agent_loop.py` (7, offline): mutation check showed that dropping
+  the record_watch wiring broke NO existing test (the taste test calls the helper directly); now covered.
+  Learned: two agents from one loop differ only in what they are TOLD (prompt: can be talked around) and what
+  they can REACH (servers -> tokens: enforced outside the agent).
+- Step 2 DONE (verified live 2026-10-20, as gaurav: The Friend played, id intact through both models): `multi_agent.py` = Supervisor + Catalog agent.
+  "Agent as a tool": the Supervisor has device (+ taste) servers and one LocalTool, `ask_catalog_agent`; its
+  function runs the Catalog agent (own prompt, only catalog-mcp, own token, own 4-turn budget) and returns its
+  final answer as the tool result. `agent.py`: `LocalTool` + `McpToolbox.add_local()` (in-process tools next to
+  MCP ones). `python multi_agent.py --tools` / `"play ..."`. `tests/test_multi_agent.py` (5): handoff order,
+  each model offered only its own tools, Catalog model sees only the question, Supervisor cannot search, the
+  token the Catalog agent ACTUALLY requested is refused at device-mcp (WRONG_AUDIENCE). 73 tests total.
+  Mutation-checked (Catalog agent given all servers; Supervisor keeping catalog).
+  Learned: catalog-mcp (a server, no model) is not the Catalog agent (a model + loop that is a CLIENT of it).
+  Two separations: context isolation (what each model SEES: only the question goes down, only the answer comes
+  back; built by code) and privilege isolation (what each agent can DO: tokens). Costs: 5 model calls instead
+  of 3, two turn budgets, and the content_id now passes through two models as text.
+- Seen live (1 run): the Supervisor's final answer OVERCLAIMED: "playback has been started" although play_title
+  said "Playback was NOT verified", and it invented "your living-room TV". Same honesty lines as the concierge's
+  prompt. One run is an anecdote, not a rate: the evals only run the single concierge today. Parked: let the
+  eval runner run the team (multi_agent.run_team) and compare case 11 + a "no invented details" check for both.
+- Step 3 DONE (sandbox; user's live run pending): Taste agent in `multi_agent.py` (only taste-mcp, own prompt:
+  ONE remember_taste call PER ITEM, never claim a save without a successful call; 5-turn budget). Supervisor now
+  has ONLY device-mcp + `ask_catalog_agent` + `ask_taste_agent` (the taste bridge and its prompt line exist only
+  when TASTE_MCP_URL is set). The bridge is generic: `ask_agent_tool(...)`. record_watch: a code-only RECORDER
+  (`record_watch_after_play`, the Supervisor's after_tool hook) opens a short taste-mcp connection only after a
+  real play (a dry run opens none). `tests/test_multi_agent.py` now 11 (+6): Supervisor holds no taste server,
+  Taste agent's real token refused at device-mcp, two preferences -> two remember_taste rows, "Mishika hates
+  horror" from Gaurav's login lands in GAURAV's taste, recorder only after a real play. Test logins now go to a
+  temporary file (Step 2's test overwrote the real .login.json). 79 tests total. Mutation-checked (Supervisor
+  keeps taste; recorder ignores dry run; Taste agent gets every server; Supervisor rewords the handoff).
+  Learned: an agent is for JUDGEMENT; bookkeeping that must always happen is plain code (the recorder has a
+  token but no model). Whose data = the token, never the words passed between agents. The handoff should
+  carry the person's own words (paraphrase = lossy: "no horror, love Nolan" can lose an item).
+  Known: inside ONE process, the separation is between MODELS (what each can trigger), not between code; and
+  a taste-mcp token can call any taste tool (record_watch is only hidden). Per-tool scopes or separate
+  processes (A2A) would make it real at the network level.
+- Next: OpenTelemetry tracing (who did what, across agents), then Consensus (decide how a second person is
+  identified).
+
+## Phases 4-5: NOT STARTED
 
 ## Known fragile points carried forward
 - All waits are fixed sleeps, not checks (matters for Phase 4).
-- `close_app` untested on this TV.
+- `close_app` is unreliable on this TV (Step 9: once 403 access denied, once OK).
 - Profiles are picked by position with blind key presses (no way to read the screen); if someone adds or
-  reorders profiles, update NETFLIX_PROFILES / PRIME_PROFILES. close_app on this TV is still unverified.
+  reorders profiles, update NETFLIX_PROFILES / PRIME_PROFILES.
 - Access tokens last 5 min and the agent gets them at start: a run longer than that would get 401s mid-run
   (Phase 4: refresh and retry on 401).
 - Keycloak dev mode keeps its data inside the container: `docker rm` loses it (the realm file re-creates it).

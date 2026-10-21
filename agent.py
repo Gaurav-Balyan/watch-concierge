@@ -27,12 +27,18 @@ Needs in .env: GROQ_API_KEY, GROQ_MODEL, RAPIDAPI_KEY, TV_IP, TV_MAC.
 PHASE 2 (Step 6): a server in SERVERS may be a URL instead of a script. Then the
 agent connects over HTTP and sends a token for THAT server only (its audience),
 taken from your login (python login.py). Set CATALOG_MCP_URL in .env to try it.
+
+PHASE 3 (Step 1): the loop is now the class Agent (name + system prompt + servers).
+run_agent() runs the same all-in-one "concierge" agent as before, so behaviour,
+evals and tests are unchanged. Specialist agents are just other Agent(...)s.
 """
 import asyncio
 import json
 import os
 import sys
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
+from typing import Awaitable, Callable
 
 from groq import APIError, AsyncGroq, BadRequestError, NotFoundError
 from mcp import Client, StdioServerParameters
@@ -133,10 +139,28 @@ def result_to_text(result) -> str:
 
 # ---------------------------------------------------------------- The toolbox
 
+@dataclass
+class LocalTool:
+    """A tool that is plain Python in THIS process, not an MCP server (Phase 3, Step 2).
+
+    Used for "agent as a tool": the Supervisor's ask_catalog_agent is a LocalTool whose
+    function runs another Agent. The model cannot tell the difference: it sees a name,
+    a description and a schema, exactly as for an MCP tool.
+    fn: async (args: dict) -> str   (raise an exception to report an error)
+    """
+    name: str
+    description: str
+    parameters: dict
+    fn: Callable[[dict], Awaitable[str]]
+    owner: str = "local"          # shown in the trace instead of a server name
+    read_only: bool = True
+
+
 class McpToolbox:
     """Starts MCP servers, discovers their tools, and routes tool calls.
 
     Use as:  async with McpToolbox(SERVERS) as tools: ...
+    Local (in-process) tools can be added with add_local().
     """
 
     def __init__(self, servers: dict[str, str]):
@@ -146,6 +170,7 @@ class McpToolbox:
         self.routes: dict[str, tuple[str, Client]] = {}   # tool name -> (server, client)
         self.read_only: dict[str, bool] = {}
         self.transports: dict[str, str] = {}   # server -> "stdio" | "http, as <user>"
+        self.local: dict[str, LocalTool] = {}  # tool name -> in-process tool
 
     async def __aenter__(self):
         await self._stack.__aenter__()
@@ -196,11 +221,28 @@ class McpToolbox:
             lines.append(f"  {server}.{name}  [{kind}]  ({self.transports.get(server, '?')})")
         return "\n".join(lines)
 
+    def add_local(self, tool: LocalTool):
+        if tool.name in self.routes:
+            raise RuntimeError(f"Tool name clash: '{tool.name}' is offered by "
+                               f"'{self.routes[tool.name][0]}' and '{tool.owner}'. Refusing to start.")
+        self.local[tool.name] = tool
+        self.routes[tool.name] = (tool.owner, None)
+        self.read_only[tool.name] = tool.read_only
+        self.transports[tool.owner] = "in-process"
+        self.tools.append({"type": "function", "function": {
+            "name": tool.name, "description": tool.description, "parameters": tool.parameters}})
+
     async def call(self, name: str, args: dict) -> tuple[str, bool]:
         """Forward a tool call to the server that owns it. Returns (text, is_error)."""
         route = self.routes.get(name)
         if route is None:
             return f"Unknown tool: {name}", True
+        if name in self.local:
+            try:
+                return await self.local[name].fn(args), False
+            except Exception as e:  # noqa: BLE001   e.g. the other agent could not log in or connect
+                cause = first_cause(e)
+                return f"{self.local[name].owner} failed: {type(cause).__name__}: {cause}", True
         _, client = route
         try:
             result = await client.call_tool(name, args, read_timeout_seconds=TOOL_CALL_TIMEOUT)
@@ -238,20 +280,56 @@ async def record_watch_if_played(toolbox: "McpToolbox", args: dict, result_text:
     print(f"    (agent) record_watch: {' '.join(text.split())[:200]}")
 
 
-async def run_agent(user_request: str, trace: list | None = None) -> str:
-    """Run one request. If `trace` is a list, every tool call the model makes is
-    appended to it as a dict (used by the evals; normal runs leave it None)."""
-    client = AsyncGroq()   # reads GROQ_API_KEY from the environment
-    messages = [
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": user_request},
-    ]
-    seen_calls: dict[tuple, str] = {}   # (tool, args) -> "ok" | "error", for this request only
+async def record_watch_after_play(toolbox: "McpToolbox", name: str, args: dict, result_text: str):
+    """after_tool hook for the concierge: bookkeeping is wired in by CODE, never left to a model."""
+    if name == "play_title":
+        await record_watch_if_played(toolbox, args, result_text)
 
-    async with McpToolbox(SERVERS) as toolbox:
-        print("Discovered tools:\n" + toolbox.describe())
 
-        for turn in range(1, MAX_TURNS + 1):
+class Agent:
+    """One agent = a name, a system prompt, and the MCP servers it may use.
+
+    Phase 3, Step 1: the loop used to live in run_agent(). It is now the same for
+    every agent; what makes two agents DIFFERENT is only
+      - what they are TOLD  (system prompt)       -> shapes behaviour, can be talked out of
+      - what they can REACH (servers -> tokens)   -> enforced outside the agent, by the token
+    The second is the one we rely on for safety.
+
+    after_tool: optional  async (toolbox, tool_name, args, result_text) -> None,
+    run by agent code after each tool call that ran and succeeded.
+    local_tools: in-process tools added next to the MCP ones (Step 2: another agent).
+    """
+
+    def __init__(self, name: str, system: str, servers: dict[str, str],
+                 max_turns: int | None = None, after_tool=None,
+                 local_tools: list[LocalTool] | None = None):
+        self.name = name
+        self.system = system
+        self.servers = servers
+        self.max_turns = max_turns          # None = the module's MAX_TURNS (read at run time)
+        self.after_tool = after_tool
+        self.local_tools = local_tools or []
+
+    async def run(self, request: str, trace: list | None = None) -> str:
+        """Open THIS agent's servers (with tokens for those servers only), then run the loop."""
+        async with McpToolbox(self.servers) as toolbox:
+            for tool in self.local_tools:
+                toolbox.add_local(tool)
+            print(f"[{self.name}] discovered tools:\n" + toolbox.describe())
+            return await self.loop(toolbox, request, trace)
+
+    async def loop(self, toolbox: McpToolbox, request: str, trace: list | None = None) -> str:
+        """The tool-use loop. If `trace` is a list, every tool call is appended to it as a dict."""
+        max_turns = self.max_turns or MAX_TURNS
+        client = AsyncGroq()   # reads GROQ_API_KEY from the environment
+        messages = [
+            {"role": "system", "content": self.system},
+            {"role": "user", "content": request},
+        ]
+        seen_calls: dict[tuple, str] = {}   # (tool, args) -> "ok" | "error", for this request only
+        tag = f"[{self.name}]"
+
+        for turn in range(1, max_turns + 1):
             try:
                 response = await client.chat.completions.create(
                     model=MODEL,
@@ -266,13 +344,13 @@ async def run_agent(user_request: str, trace: list | None = None) -> str:
                     raise                      # a real request problem, not a model mistake
                 # Groq checked the model's arguments against the tool schema and refused them
                 # (e.g. "year": null). Nothing ran. Treat it like a failed tool call: tell the
-                # model exactly what was wrong and let it try again, within MAX_TURNS.
-                print(f"\n--- turn {turn}: Groq REJECTED the model's tool call (nothing ran)")
+                # model exactly what was wrong and let it try again, within max_turns.
+                print(f"\n--- {tag} turn {turn}: Groq REJECTED the model's tool call (nothing ran)")
                 print(f"    model sent: {rejected['sent']}")
                 print(f"    reason    : {rejected['reason']}")
                 if trace is not None:
                     trace.append({"tool": "(rejected by provider)", "args": {}, "result": rejected["reason"],
-                                  "is_error": True, "executed": False})
+                                  "is_error": True, "executed": False, "agent": self.name})
                 messages.append({"role": "user", "content": (
                     "(system note) Your last tool call was rejected and NOT run: "
                     f"{rejected['reason']} You sent: {rejected['sent']} "
@@ -281,7 +359,7 @@ async def run_agent(user_request: str, trace: list | None = None) -> str:
                 continue
             choice = response.choices[0]
             message = choice.message
-            print(f"\n--- turn {turn}: finish_reason = {choice.finish_reason}")
+            print(f"\n--- {tag} turn {turn}: finish_reason = {choice.finish_reason}")
             if message.content and message.content.strip():
                 print(f"    model says: {message.content.strip()}")
 
@@ -331,18 +409,29 @@ async def run_agent(user_request: str, trace: list | None = None) -> str:
                     result, is_error = await toolbox.call(name, args)
                     executed = True
                     seen_calls[key] = "error" if is_error else "ok"
-                    if name == "play_title" and not is_error:
-                        await record_watch_if_played(toolbox, args, result)
+                    if self.after_tool and not is_error:
+                        await self.after_tool(toolbox, name, args, result)
 
                 shown = " ".join(result.split())
                 shown = shown if len(shown) < 600 else shown[:600] + "..."
                 print(f"    we return : {shown}")
                 if trace is not None:
                     trace.append({"tool": name, "args": args, "result": result,
-                                  "is_error": is_error, "executed": executed})
+                                  "is_error": is_error, "executed": executed, "agent": self.name})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-    return f"Stopped after {MAX_TURNS} turns without a final answer."
+        return f"Stopped after {max_turns} turns without a final answer."
+
+
+def concierge() -> Agent:
+    """The single all-in-one agent of Phases 1-2, now built from the generic Agent.
+    Built at call time, so SERVERS / SYSTEM changed by the evals or tests are picked up."""
+    return Agent("concierge", SYSTEM, SERVERS, after_tool=record_watch_after_play)
+
+
+async def run_agent(user_request: str, trace: list | None = None) -> str:
+    """Run one request with the concierge agent (unchanged entry point for evals and tests)."""
+    return await concierge().run(user_request, trace)
 
 
 # ---------------------------------------------------------------- Command line
