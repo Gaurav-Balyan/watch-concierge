@@ -113,7 +113,8 @@ def summary(s) -> str:
     if "enduser.id" in a:
         bits.append(f"as {a['enduser.id']}")
     if "keycloak.audience" in a:
-        bits.append(f"aud={a['keycloak.audience']}")
+        extra = a.get("keycloak.extra_scopes")
+        bits.append(f"aud={a['keycloak.audience']}" + (f" +{','.join(extra)}" if extra else ""))
     if "gen_ai.usage.input_tokens" in a:
         bits.append(f"in={a['gen_ai.usage.input_tokens']} out={a.get('gen_ai.usage.output_tokens')}")
     if "gen_ai.response.finish_reasons" in a:

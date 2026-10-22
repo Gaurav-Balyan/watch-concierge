@@ -34,6 +34,8 @@ import tracing
 from auth import McpTokenVerifier
 
 AUDIENCE = "taste-mcp"
+HOUSEHOLD_SCOPE = "taste-household-read"   # Phase 3: only the Consensus agent's token carries it
+MAX_NAMES = 6
 HISTORY_SHOWN = 10
 MAX_ITEMS_PER_KIND = 50
 
@@ -81,6 +83,13 @@ async def in_db(user_id: str, work):
         return await anyio.to_thread.run_sync(_run, user_id, work)
 
 
+def _register(cur, user_id: str, username: str):
+    """Put the caller in household_members (sharing OFF) the first time they use taste-mcp."""
+    cur.execute("INSERT INTO household_members (user_id, username) VALUES (%s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username "
+                "WHERE household_members.username <> EXCLUDED.username", (user_id, username))
+
+
 def _clean_item(item: str) -> str:
     item = " ".join(item.split())
     if not 1 <= len(item) <= 100:
@@ -100,6 +109,7 @@ async def get_my_taste() -> dict:
     user_id, username = caller()
 
     def work(cur):
+        _register(cur, user_id, username)
         # Layer 1: every query names the caller explicitly. Layer 2 (row-level security)
         # would hide other people's rows even if this WHERE were forgotten.
         cur.execute("SELECT kind, item FROM taste_items WHERE user_id = %s ORDER BY created_at", (user_id,))
@@ -135,6 +145,7 @@ async def remember_taste(kind: Literal["like", "dislike"], item: str) -> dict:
     other = "dislike" if kind == "like" else "like"
 
     def work(cur):
+        _register(cur, user_id, username)
         cur.execute("SELECT count(*) FROM taste_items WHERE user_id = %s AND kind = %s", (user_id, kind))
         if cur.fetchone()[0] >= MAX_ITEMS_PER_KIND:
             raise ToolError(f"LIMIT: {username} already has {MAX_ITEMS_PER_KIND} {kind}s saved.")
@@ -160,6 +171,7 @@ async def forget_taste(kind: Literal["like", "dislike"], item: str) -> dict:
     item = _clean_item(item)
 
     def work(cur):
+        _register(cur, user_id, username)
         cur.execute("DELETE FROM taste_items WHERE user_id = %s AND kind = %s AND item = %s",
                     (user_id, kind, item))
         return cur.rowcount
@@ -169,7 +181,7 @@ async def forget_taste(kind: Literal["like", "dislike"], item: str) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, idempotent_hint=False, open_world_hint=False))
-async def record_watch(title: str, service: Literal["netflix", "prime"], content_id: str) -> dict:
+async def record_watch(title: str, service: Literal["netflix", "prime", "youtube"], content_id: str) -> dict:
     """Add a title to the watch history of the person making this request.
 
     The agent calls this itself after play_title succeeds; it is not for the model.
@@ -188,6 +200,95 @@ async def record_watch(title: str, service: Literal["netflix", "prime"], content
 
     await in_db(user_id, work)
     return {"recorded": True, "person": username, "title": title}
+
+
+# ----------------------------------------------------------------- household (Phase 3, Step 5a)
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, idempotent_hint=True, open_world_hint=False))
+async def set_household_sharing(share: bool) -> dict:
+    """Turn ON or OFF sharing of the logged-in person's likes and dislikes with their household.
+
+    Only for the person making this request: there is no way to change it for someone else.
+    Only call it when the person asks for it themselves ("share my taste with the household").
+    Watch history is never shared, whatever this setting says.
+    """
+    user_id, username = caller()
+
+    def work(cur):
+        _register(cur, user_id, username)
+        cur.execute("UPDATE household_members SET share_taste = %s, changed_at = now() WHERE user_id = %s",
+                    (share, user_id))           # WHERE user_id = caller: never anyone else's row
+
+    await in_db(user_id, work)
+    return {"person": username, "sharing_with_household": share,
+            "shared": "likes and dislikes only, never watch history" if share else "nothing"}
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+async def get_household_taste(names: list[str]) -> dict:
+    """Get the likes and dislikes of several household members, to find something they can watch
+    together. Needs the household-read permission (only the Consensus agent has it).
+
+    A person is included only if they turned sharing on themselves; the caller is always included.
+    Watch history is never returned. Every lookup, allowed or refused, is written to an audit log.
+
+    Args:
+        names: Usernames of the people watching together, e.g. ["gaurav", "mishika"].
+    """
+    user_id, username = caller()
+    token = get_access_token()
+    wanted = list(dict.fromkeys(" ".join(str(n).split()).lower() for n in names if str(n).strip()))[:MAX_NAMES]
+    if username.lower() not in wanted:
+        wanted.insert(0, username.lower())
+
+    if HOUSEHOLD_SCOPE not in (token.scopes or []):
+        # The rule lives HERE, not in the agent: a token without the permission is refused even if
+        # a model was talked into calling this tool. The refusal is audited too.
+        def refuse(cur):
+            for name in wanted:
+                cur.execute("INSERT INTO household_reads (asked_by, about, allowed, reason) "
+                            "VALUES (%s, %s, false, 'no permission')", (username, name))
+        await in_db(user_id, refuse)
+        raise ToolError(f"FORBIDDEN: this token lacks the '{HOUSEHOLD_SCOPE}' permission. "
+                        "Only the Consensus agent may read other people's taste.")
+
+    def decide(cur):
+        _register(cur, user_id, username)
+        decisions = []
+        for name in wanted:
+            cur.execute("SELECT user_id, share_taste FROM household_members WHERE lower(username) = %s", (name,))
+            row = cur.fetchone()
+            if row is None:
+                verdict = (None, "not in household")
+            elif str(row[0]) == user_id:
+                verdict = (str(row[0]), "self")
+            elif not row[1]:
+                verdict = (None, "not sharing")
+            else:
+                verdict = (str(row[0]), "shared")
+            cur.execute("INSERT INTO household_reads (asked_by, about, allowed, reason) VALUES (%s, %s, %s, %s)",
+                        (username, name, verdict[0] is not None, verdict[1]))
+            decisions.append((name, *verdict))
+        return decisions
+
+    decisions = await in_db(user_id, decide)
+
+    people = []
+    for name, member_id, reason in decisions:
+        if member_id is None:
+            people.append({"name": name, "included": False, "reason": reason})
+            continue
+
+        def read(cur, member_id=member_id):
+            # A transaction scoped to THAT person (row-level security still shows one person
+            # per transaction). Only taste_items: watch_history is never touched here.
+            cur.execute("SELECT kind, item FROM taste_items WHERE user_id = %s ORDER BY created_at", (member_id,))
+            return cur.fetchall()
+
+        items = await in_db(member_id, read)
+        people.append({"name": name, "included": True,
+                       "likes": [i for k, i in items if k == "like"],
+                       "dislikes": [i for k, i in items if k == "dislike"]})
+    return {"asked_by": username, "people": people, "never_shared": "watch history"}
 
 
 if __name__ == "__main__":

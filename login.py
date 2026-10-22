@@ -37,7 +37,10 @@ import config
 CLIENT_ID = "concierge-cli"
 REDIRECT_URI = "http://127.0.0.1:8765/callback"
 # At login we ask for every server scope ONCE; later each access token is narrowed to one.
-LOGIN_SCOPE = "openid catalog-mcp device-mcp taste-mcp"
+# Phase 3: taste-household-read is asked for at LOGIN so that a later refresh may include it
+# (a refresh can only NARROW what the login granted, never widen it). Only the Consensus agent's
+# token actually carries it: access_token_for(..., extra_scopes=[...]).
+LOGIN_SCOPE = "openid catalog-mcp device-mcp taste-mcp taste-household-read"
 STATE_FILE = config.BASE_DIR / ".login.json"
 LOGIN_TIMEOUT = 180   # seconds to finish signing in in the browser
 
@@ -114,8 +117,9 @@ def load_login() -> dict | None:
     return json.loads(STATE_FILE.read_text(encoding="utf-8"))
 
 
-def access_token_for(audience: str) -> str:
+def access_token_for(audience: str, extra_scopes: tuple[str, ...] = ()) -> str:
     """A fresh access token usable ONLY at `audience` (e.g. 'catalog-mcp').
+    extra_scopes: permissions on top of the audience, e.g. ('taste-household-read',).
 
     Uses the saved refresh token and asks for a narrower scope than at login.
     Keycloak's refresh token rotates, so we save the new one each time.
@@ -126,7 +130,7 @@ def access_token_for(audience: str) -> str:
     try:
         tokens = _post_token({"grant_type": "refresh_token", "client_id": CLIENT_ID,
                               "refresh_token": state["refresh_token"],
-                              "scope": f"openid {audience}"})
+                              "scope": " ".join(("openid", audience, *extra_scopes))})
     except LoginError as e:
         if "invalid_grant" in str(e):
             raise LoginError(f"The saved login for {state['username']} has expired or was ended. "

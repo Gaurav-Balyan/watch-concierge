@@ -17,4 +17,7 @@ SERVICES = {
     prime.NAME: prime,
 }
 
-__all__ = ["SERVICES", "netflix", "prime", "youtube"]
+# What device-mcp can PLAY (Phase 3): the catalogue services plus YouTube (found by name, not catalogue).
+PLAYABLE = {**SERVICES, youtube.NAME: youtube}
+
+__all__ = ["PLAYABLE", "SERVICES", "netflix", "prime", "youtube"]

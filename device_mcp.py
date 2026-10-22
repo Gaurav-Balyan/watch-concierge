@@ -51,7 +51,7 @@ import tracing
 import tv
 from auth import McpTokenVerifier, caller_name
 from logsetup import LogStream, get_logger
-from services import SERVICES
+from services import PLAYABLE as SERVICES     # Netflix, Prime and (Phase 3) YouTube
 
 AUDIENCE = "device-mcp"   # this server's name in Keycloak (a client scope in household-realm.json)
 
@@ -69,7 +69,7 @@ mcp = MCPServer(
 log = get_logger("device_mcp")   # see logs/device_mcp.log
 
 # Each person's profile position per app, chosen from the token's user (never from the model).
-PROFILES = {"netflix": config.NETFLIX_PROFILES, "prime": config.PRIME_PROFILES}
+PROFILES = {"netflix": config.NETFLIX_PROFILES, "prime": config.PRIME_PROFILES, "youtube": {}}  # no picker
 
 ACTION_TIMEOUT = 240          # seconds: wake + app launch + profile + link can take a while
 _action_lock = asyncio.Lock()  # one TV action at a time
@@ -78,10 +78,12 @@ _action_lock = asyncio.Lock()  # one TV action at a time
 ID_PATTERNS = {
     "netflix": re.compile(r"^\d{1,12}$"),
     "prime": re.compile(r"^amzn1\.dv\.gti\.[0-9a-fA-F-]{8,64}$"),
+    "youtube": re.compile(r"^[A-Za-z0-9_-]{11}$"),
 }
 ID_HINTS = {
     "netflix": "digits only, e.g. 82182295",
     "prime": "an id like amzn1.dv.gti.<uuid> (not a link)",
+    "youtube": "an 11-character video id like dQw4w9WgXcQ (not a link)",
 }
 
 
@@ -132,10 +134,11 @@ async def tv_status() -> dict:
 
 @mcp.tool(annotations=ToolAnnotations(
     read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True))
-async def play_title(service: Literal["netflix", "prime"], content_id: str, title: str = "") -> dict:
+async def play_title(service: Literal["netflix", "prime", "youtube"], content_id: str, title: str = "") -> dict:
     """Open a title on the living-room TV, waking the TV first if needed.
 
-    Only call this with a service and content_id returned by search_title.
+    Only call this with a service and content_id returned by search_title, or with
+    service "youtube" and a video_id returned by search_youtube.
     This changes what is on the TV, and a repeated call can launch the title
     again, so do not call it twice for the same request.
 
@@ -152,7 +155,7 @@ async def play_title(service: Literal["netflix", "prime"], content_id: str, titl
     if not ID_PATTERNS[service].match(content_id):
         raise ToolError(
             f"INVALID_INPUT: content_id {content_id!r} is not a valid {service} id "
-            f"({ID_HINTS[service]}). Use an id returned by search_title. "
+            f"({ID_HINTS[service]}). Use an id returned by search_title or search_youtube. "
             "Retrying with the same input will fail again."
         )
     svc = SERVICES[service]

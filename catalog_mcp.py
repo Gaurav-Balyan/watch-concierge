@@ -39,9 +39,12 @@ from mcp.server.mcpserver import MCPServer   # mcp 2.x; in mcp 1.x this was Fast
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+import asyncio
+
 import config
 import lookup
 import tracing
+from services import youtube
 from auth import McpTokenVerifier
 
 AUDIENCE = "catalog-mcp"   # this server's name in Keycloak (a client scope in household-realm.json)
@@ -99,6 +102,31 @@ async def search_title(title: str, year: str | None = None) -> dict:
     # Always return an object with an explicit count: an empty list on its own
     # would reach the model as "no content at all", which is ambiguous.
     return {"count": len(matches), "matches": [dataclasses.asdict(m) for m in matches]}
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True))
+async def search_youtube(query: str) -> dict:
+    """Search YouTube for a song, music video or other video, by name.
+
+    Use it for songs and music ("play tum hi ho by arijit singh") and anything the person
+    wants on YouTube. Not for movies and series on Netflix or Prime (use search_title).
+
+    Returns {"count": N, "videos": [{"video_id", "title", "channel", "duration_seconds"}]},
+    the top results in YouTube's order. Play one with play_title(service="youtube",
+    content_id=<video_id>). count 0 means nothing was found.
+
+    Args:
+        query: What to search for, e.g. "tum hi ho arijit singh" (song + artist works best).
+    """
+    query = " ".join(query.split())
+    if not 2 <= len(query) <= 200:
+        raise ToolError("INVALID_INPUT: query must be 2 to 200 characters, e.g. 'tum hi ho arijit singh'.")
+    try:
+        videos = await asyncio.to_thread(youtube.find_videos, query, 3)
+    except Exception as e:  # noqa: BLE001   yt-dlp breaks when YouTube changes; say so plainly
+        raise ToolError(f"YOUTUBE_SEARCH_FAILED ({type(e).__name__}). If this keeps happening, "
+                        "run: pip install -U yt-dlp") from e
+    return {"count": len(videos), "videos": videos}
 
 
 if __name__ == "__main__":

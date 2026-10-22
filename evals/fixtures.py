@@ -20,6 +20,22 @@ CATALOG = [
 ]
 
 
+YOUTUBE_TUM_HI_HO = "Umqb9KENgmk"
+YOUTUBE = [  # fixed YouTube results for the evals and tests (no network)
+    ("tum hi ho", [{"video_id": YOUTUBE_TUM_HI_HO, "title": "Tum Hi Ho - Aashiqui 2 | Arijit Singh",
+                    "channel": "T-Series", "duration_seconds": 262}]),
+]
+
+
+def find_videos(query: str, limit: int = 3) -> list[dict]:
+    """Same signature as services.youtube.find_videos, over the fixed list."""
+    q = query.lower()
+    for key, videos in YOUTUBE:
+        if key in q:
+            return videos[:limit]
+    return []
+
+
 async def search(title: str, year: str | None = None, only: str | None = None) -> list[Match]:
     """Same signature and result type as lookup.find_title, but over the fixed catalog."""
     q = " ".join(title.lower().split())

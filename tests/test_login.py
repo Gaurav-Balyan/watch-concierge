@@ -176,7 +176,7 @@ def test_agent_reaches_catalog_over_http_as_the_logged_in_person():
 
     with catalog_server():
         names, transport = asyncio.run(discover())
-        assert names == ["search_title"], names
+        assert names == ["search_title", "search_youtube"], names
         assert transport == "http, as mishika", transport
         assert "accepted for mishika" in last_auth_log_line()
 

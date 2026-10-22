@@ -89,7 +89,7 @@ def test_each_model_call_records_who_and_which_tools():
     for c in chats:
         who, offered = c.attributes["gen_ai.agent.name"], set(c.attributes["gen_ai.request.tools"])
         if who == "catalog":
-            assert offered == {"search_title"}, offered
+            assert offered == {"search_title", "search_youtube"}, offered
         else:
             assert who == "supervisor" and "search_title" not in offered, (who, offered)
 

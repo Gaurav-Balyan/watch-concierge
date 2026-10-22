@@ -110,6 +110,15 @@
                     }
                 }
             ]
+        },
+        {
+            "name": "taste-household-read",
+            "description": "Phase 3: read the likes/dislikes of household members who opted in (Consensus agent only). No audience: it is a permission at taste-mcp, not a new server.",
+            "protocol": "openid-connect",
+            "attributes": {
+                "include.in.token.scope": "true",
+                "display.on.consent.screen": "false"
+            }
         }
     ],
     "clients": [
@@ -128,7 +137,8 @@
             "optionalClientScopes": [
                 "catalog-mcp",
                 "device-mcp",
-                "taste-mcp"
+                "taste-mcp",
+                "taste-household-read"
             ],
             "defaultClientScopes": [
                 "basic",

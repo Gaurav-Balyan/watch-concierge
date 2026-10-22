@@ -54,6 +54,7 @@ def reset_test_taste():
     try:
         with psycopg.connect(ADMIN_TEST_DB_URL, connect_timeout=3) as conn:
             conn.execute("DELETE FROM taste_items")
+            conn.execute("UPDATE household_members SET share_taste = false")   # Phase 3: nobody shares
     except psycopg.OperationalError as e:
         raise Skip(f"Postgres test database not reachable as admin ({str(e).strip().splitlines()[0]})")
 

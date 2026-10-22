@@ -89,7 +89,7 @@ def test_each_model_is_offered_only_its_own_tools():
     supervisor_calls = [fake.calls[i] for i in (0, 3, 4)]
     catalog_calls = [fake.calls[i] for i in (1, 2)]
     for c in catalog_calls:
-        assert c["tools"] == ["search_title"], c["tools"]
+        assert c["tools"] == ["search_title", "search_youtube"], c["tools"]
     for c in supervisor_calls:
         assert "search_title" not in c["tools"] and "ask_catalog_agent" in c["tools"], c["tools"]
 
@@ -114,6 +114,45 @@ def test_supervisor_cannot_search_itself():
 
 
 TASTE_URL = f"http://127.0.0.1:{config.TASTE_MCP_PORT}/mcp"
+SONG_ID = "Umqb9KENgmk"   # evals/fixtures.py YOUTUBE
+
+
+def test_a_song_goes_to_youtube():
+    answer, trace, fake = run_offline([
+        reply(calls=[("ask_catalog_agent", '{"question": "Find on YouTube: tum hi ho arijit singh"}')]),
+        reply(calls=[("search_youtube", '{"query": "tum hi ho arijit singh"}')]),                  # catalog
+        reply(text='{"youtube": [{"video_id": "%s", "title": "Tum Hi Ho", "channel": "T-Series"}]}' % SONG_ID),
+        reply(calls=[("play_title", '{"service": "youtube", "content_id": "%s", "title": "Tum Hi Ho"}' % SONG_ID)]),
+        reply(text="Simulated: Tum Hi Ho on YouTube."),
+    ], "play tum hi ho by arijit singh on youtube")
+    steps = [(t["agent"], t["tool"]) for t in trace]
+    assert steps == [("catalog", "search_youtube"), ("supervisor", "ask_catalog_agent"),
+                     ("supervisor", "play_title")], steps
+    assert json.loads(trace[0]["result"])["videos"][0]["video_id"] == SONG_ID
+    played = json.loads(trace[2]["result"])
+    assert played["status"] == "dry_run" and played["service"] == "youtube" and played["content_id"] == SONG_ID
+
+
+def test_a_youtube_link_is_not_a_video_id():
+    _, trace, _ = run_offline([
+        reply(calls=[("play_title", '{"service": "youtube", "content_id": "https://youtu.be/%s"}' % SONG_ID)]),
+        reply(text="That was not a video id."),
+    ], "play this")
+    assert trace[0]["is_error"] and "INVALID_INPUT" in trace[0]["result"], trace[0]
+
+
+def test_supervisor_knows_the_youtube_route():
+    saved = agent.SERVERS
+    agent.SERVERS = dict(FAKE_SERVERS)
+    try:
+        system = multi_agent.supervisor().system
+    finally:
+        agent.SERVERS = saved
+    assert "Find on YouTube:" in system and "service 'youtube'" in system
+    assert "search_youtube" in multi_agent.CATALOG_SYSTEM
+    # Seen live: with an old catalog-mcp (no search_youtube) the Catalog agent made NO tool call
+    # and answered "No YouTube results were found": a claim with nothing behind it.
+    assert "Never report a search result without calling the tool" in multi_agent.CATALOG_SYSTEM
 
 
 def test_supervisor_with_taste_has_only_device_and_two_bridges():
@@ -122,7 +161,7 @@ def test_supervisor_with_taste_has_only_device_and_two_bridges():
     try:
         sup = multi_agent.supervisor()
         assert set(sup.servers) == {"device"}, sup.servers               # no taste, no catalog server
-        assert [t.name for t in sup.local_tools] == ["ask_catalog_agent", "ask_taste_agent"]
+        assert [t.name for t in sup.local_tools] == ["ask_catalog_agent", "ask_taste_agent", "ask_consensus_agent"]
         assert "ask_taste_agent" in sup.system
         assert set(multi_agent.taste_agent().servers) == {"taste"}
     finally:
@@ -136,6 +175,7 @@ def test_without_taste_there_is_no_taste_bridge():
         sup = multi_agent.supervisor()
         assert [t.name for t in sup.local_tools] == ["ask_catalog_agent"]
         assert "ask_taste_agent" not in sup.system      # never mention a tool that does not exist
+        assert "ask_consensus_agent" not in sup.system
     finally:
         agent.SERVERS = saved
 
@@ -158,12 +198,13 @@ def temp_login(username):
 
 @contextlib.contextmanager
 def token_spy():
-    """Records (audience, token) for every token the agent code asks for."""
+    """Records (audience, token) for every token the agent code asks for. Extra permissions are
+    shown as 'taste-mcp+taste-household-read'."""
     requested, real = [], login.access_token_for
 
-    def spy(audience):
-        token = real(audience)
-        requested.append((audience, token))
+    def spy(audience, extra_scopes=()):
+        token = real(audience, extra_scopes)
+        requested.append(("+".join((audience, *extra_scopes)), token))
         return token
     login.access_token_for = spy
     try:
@@ -207,7 +248,7 @@ def test_catalog_agents_real_token_is_refused_at_device_mcp():
     specialist_token_is_refused_at_device(
         multi_agent.catalog_agent,
         {"catalog": f"http://127.0.0.1:{config.CATALOG_MCP_PORT}/mcp", "device": DEVICE_URL},
-        {"search_title"}, "catalog-mcp", catalog_server)
+        {"search_title", "search_youtube"}, "catalog-mcp", catalog_server)
 
 
 def test_taste_agents_real_token_is_refused_at_device_mcp():
@@ -215,7 +256,8 @@ def test_taste_agents_real_token_is_refused_at_device_mcp():
     from test_taste_http import taste_server
     specialist_token_is_refused_at_device(
         multi_agent.taste_agent, {"taste": TASTE_URL, "device": DEVICE_URL},
-        {"get_my_taste", "remember_taste", "forget_taste", "record_watch"}, "taste-mcp", taste_server)
+        {"get_my_taste", "remember_taste", "forget_taste", "record_watch",          # routes: all server tools,
+         "set_household_sharing", "get_household_taste"}, "taste-mcp", taste_server)  # even hidden ones
 
 
 def test_team_saves_two_preferences_through_the_taste_agent():
@@ -235,7 +277,8 @@ def test_team_saves_two_preferences_through_the_taste_agent():
     assert steps == [("taste", "remember_taste"), ("taste", "remember_taste"),
                      ("supervisor", "ask_taste_agent")], steps
     assert fake.calls[1]["messages"][1]["content"] == words              # the person's words, unchanged
-    assert fake.calls[1]["tools"] == ["forget_taste", "get_my_taste", "remember_taste"]
+    # Offered to the Taste MODEL: never get_household_taste (Step 5: only the Consensus agent).
+    assert fake.calls[1]["tools"] == ["forget_taste", "get_my_taste", "remember_taste", "set_household_sharing"]
     for i in (0, 3):                                                       # the Supervisor's model calls
         assert not {"get_my_taste", "remember_taste", "forget_taste"} & set(fake.calls[i]["tools"])
     assert f"horror{RUN}" in taste["dislikes"] and f"Nolan{RUN}" in taste["likes"], taste

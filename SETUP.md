@@ -139,6 +139,7 @@ The same requests through the team (Phase 3). Each agent's lines are tagged `[su
 python multi_agent.py --tools                              # each agent's toolbox: no overlap
 python multi_agent.py "play The Friend 2025"
 python multi_agent.py "I don't like horror, and I love Christopher Nolan films"
+python multi_agent.py "play tum hi ho by arijit singh"           # songs: YouTube (search by name)
 ```
 The TV uses the logged-in person's profile (Netflix: Gaurav 3, Mishika 4; Prime: Gaurav 1, Mishika 3).
 Mishika's Netflix profile is a Kids profile, so Netflix blocks mature titles there.
@@ -168,6 +169,26 @@ TRACING=print,jaeger
   across processes: open http://localhost:16686, pick the service `watch-concierge (team)`, then **Find Traces**.
 - Leave `TRACING` empty to turn tracing off. Tokens are never recorded. Tool results only with `TRACE_CONTENT=1`.
 
+### 2.7 Phase 3, Step 5: household sharing (once, after updating the files)
+The realm gets a new permission and the database two new tables. Your taste data stays.
+```powershell
+docker rm -f keycloak                    # then run the Keycloak command from 1.5 again (re-imports the realm)
+Get-Content db\household.psql | docker exec -i household-db psql -U postgres -d household
+Get-Content db\household.psql | docker exec -i household-db psql -U postgres -d household_test
+python login.py                          # the old login ended with the old Keycloak
+```
+Restart `taste_mcp.py --http`. Then each person turns sharing on ONCE, for themselves (off by default; only likes
+and dislikes are ever shared, never watch history):
+```powershell
+python login.py --logout; python login.py                      # sign in as mishika
+python multi_agent.py "share my taste with the household"
+python login.py --logout; python login.py                      # back to gaurav
+python multi_agent.py "share my taste with the household"
+python multi_agent.py "me and Mishika want to watch something tonight"
+```
+Every cross-person read is in the audit log:
+`docker exec household-db psql -U postgres -d household -c "select * from household_reads order by id desc limit 10"`
+
 ## 3. Quick mode (no Docker, no login)
 Comment out the three `*_MCP_URL` lines in `.env`, then run `python agent.py "play The Friend 2025"`. The agent starts
 catalog and device itself. There are no taste tools, and the TV uses the highlighted profile.
@@ -190,6 +211,7 @@ python tests\test_agent_recovery.py #  4  offline: Groq-rejected tool calls do n
 python tests\test_agent_loop.py     #  7  offline: record_watch is wired in by code, never by the model
 python tests\test_multi_agent.py    # 11  the team: handoffs, each agent's tools and tokens, whose taste
 python tests\test_tracing.py        #  7  spans: one trace per request, nesting, no tokens in spans
+python tests\test_household.py      #  9  household read: permission, consent, no history, audit, agents
 ```
 Or all at once: `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
 not plain `pytest`: plain `pytest` can pick up Anaconda's base Python, which has none of the project's

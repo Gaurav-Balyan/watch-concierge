@@ -144,7 +144,7 @@ def test_edited_token_is_refused():
 def test_catalog_token_gets_in():
     token = keycloak_token("gaurav", "openid catalog-mcp")
     assert post_initialize(token)[0] == 200
-    assert asyncio.run(list_tools_with(token)) == ["search_title"]
+    assert asyncio.run(list_tools_with(token)) == ["search_title", "search_youtube"]
     assert "accepted for gaurav" in last_auth_log_line()
 
 

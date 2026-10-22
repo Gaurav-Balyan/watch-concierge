@@ -166,8 +166,14 @@ class McpToolbox:
     Local (in-process) tools can be added with add_local().
     """
 
-    def __init__(self, servers: dict[str, str]):
+    def __init__(self, servers: dict[str, str], scopes: dict[str, tuple[str, ...]] | None = None,
+                 offer: set[str] | None = None, hide: set[str] | None = None):
+        """scopes: extra token permissions per server, e.g. {"taste": ("taste-household-read",)}.
+        offer / hide: which discovered tools the MODEL is shown (None = all). A tool that is not
+        shown also cannot be called: the loop answers "Unknown tool" (see `offered`)."""
         self.servers = servers
+        self.scopes = scopes or {}
+        self.offer, self.hide = offer, hide or set()
         self._stack = AsyncExitStack()
         self.tools: list[dict] = []          # what the MODEL sees (Groq format)
         self.routes: dict[str, tuple[str, Client]] = {}   # tool name -> (server, client)
@@ -190,8 +196,9 @@ class McpToolbox:
             if target.startswith(("http://", "https://")):
                 # HTTP: this server gets a token whose audience is ONLY "<name>-mcp".
                 # The same login cannot be replayed by this server against another one.
-                with span("keycloak token", {"keycloak.audience": f"{name}-mcp"}):   # never the token itself
-                    token = login.access_token_for(f"{name}-mcp")
+                with span("keycloak token", {"keycloak.audience": f"{name}-mcp",            # never the token itself
+                                             "keycloak.extra_scopes": list(self.scopes.get(name, ())) or None}):
+                    token = login.access_token_for(f"{name}-mcp", tuple(self.scopes.get(name, ())))
                 http = await self._stack.enter_async_context(
                     create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}))
                 transport = streamable_http_client(target, http_client=http)
@@ -219,7 +226,7 @@ class McpToolbox:
                 ann = getattr(t, "annotations", None)
                 self.read_only[t.name] = bool(ann and getattr(ann, "read_only_hint", False))
                 discovered.append(t.name)
-                if t.name not in AGENT_ONLY_TOOLS:
+                if self._shown(t.name):
                     self.tools.append(to_groq_tool(t))   # only these are shown to the model
             set_attrs(s, {"mcp.tools": discovered})
 
@@ -232,8 +239,20 @@ class McpToolbox:
             kind = "read-only" if self.read_only[name] else "ACTS ON THE WORLD"
             if name in AGENT_ONLY_TOOLS:
                 kind += ", agent only"
+            elif name not in self.local and not self._shown(name):
+                kind += ", NOT offered to this agent"
             lines.append(f"  {server}.{name}  [{kind}]  ({self.transports.get(server, '?')})")
         return "\n".join(lines)
+
+    def _shown(self, name: str) -> bool:
+        if name in AGENT_ONLY_TOOLS or name in self.hide:
+            return False
+        return self.offer is None or name in self.offer
+
+    @property
+    def offered(self) -> set[str]:
+        """Names of the tools the model was shown. Only these may run when the model asks."""
+        return {t["function"]["name"] for t in self.tools}
 
     def add_local(self, tool: LocalTool):
         if tool.name in self.routes:
@@ -316,8 +335,11 @@ class Agent:
 
     def __init__(self, name: str, system: str, servers: dict[str, str],
                  max_turns: int | None = None, after_tool=None,
-                 local_tools: list[LocalTool] | None = None):
+                 local_tools: list[LocalTool] | None = None,
+                 scopes: dict[str, tuple[str, ...]] | None = None,
+                 offer: set[str] | None = None, hide: set[str] | None = None):
         self.name = name
+        self.scopes, self.offer, self.hide = scopes, offer, hide
         self.system = system
         self.servers = servers
         self.max_turns = max_turns          # None = the module's MAX_TURNS (read at run time)
@@ -329,7 +351,7 @@ class Agent:
         with span(f"agent {self.name}", {"gen_ai.operation.name": "invoke_agent",
                                          "gen_ai.agent.name": self.name,
                                          "agent.servers": list(self.servers)}):
-            async with McpToolbox(self.servers) as toolbox:
+            async with McpToolbox(self.servers, self.scopes, self.offer, self.hide) as toolbox:
                 for tool in self.local_tools:
                     toolbox.add_local(tool)
                 print(f"[{self.name}] discovered tools:\n" + toolbox.describe())
@@ -434,6 +456,10 @@ class Agent:
                         result, blocked = parse_error, "unparsable arguments"
                     elif name in AGENT_ONLY_TOOLS:
                         result, blocked = f"Unknown tool: {name}", "agent-only tool"   # never offered
+                    elif name in toolbox.routes and name not in getattr(toolbox, "offered", toolbox.routes):
+                        # The server has it, but THIS agent was not shown it (e.g. the Taste agent and
+                        # get_household_taste): answer as if it did not exist.
+                        result, blocked = f"Unknown tool: {name}", "not offered to this agent"
                     elif seen_calls.get(key) == "error":
                         # The model repeated a call that already failed: don't run it again.
                         result = ("BLOCKED: this exact call already failed in this request. "

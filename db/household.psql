@@ -1,0 +1,30 @@
+-- Phase 3, Step 5a: household sharing for the Consensus agent.
+-- Fresh install: 01_init.sql runs this after schema.psql. EXISTING database: run it once by hand
+-- (SETUP.md), for household and household_test. Safe to run twice (IF NOT EXISTS everywhere).
+
+-- 1. Who is in the household, and whether they share their likes/dislikes with it.
+--    A row appears the first time a person uses taste-mcp. share_taste is OFF until that person
+--    turns it on themselves (taste_mcp.py only ever updates the CALLER's own row).
+--    No row-level security here on purpose: the Consensus read must find another person BY NAME.
+--    It holds no taste, only "this name exists, and agreed (or not) to share".
+CREATE TABLE IF NOT EXISTS household_members (
+    user_id     uuid        PRIMARY KEY,
+    username    text        NOT NULL UNIQUE,
+    share_taste boolean     NOT NULL DEFAULT false,
+    changed_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2. Every cross-person read, allowed or refused. Written by taste_mcp.py, never by a model.
+CREATE TABLE IF NOT EXISTS household_reads (
+    id          bigserial   PRIMARY KEY,
+    at          timestamptz NOT NULL DEFAULT now(),
+    asked_by    text        NOT NULL,      -- username from the token
+    about       text        NOT NULL,      -- the name that was asked for
+    allowed     boolean     NOT NULL,
+    reason      text        NOT NULL       -- 'shared' | 'not sharing' | 'not in household'
+);
+
+-- 3. Rights: members can be added and updated (never deleted); the audit log is append-only.
+GRANT SELECT, INSERT, UPDATE ON household_members TO taste_app;
+GRANT SELECT, INSERT         ON household_reads   TO taste_app;
+GRANT USAGE ON SEQUENCE household_reads_id_seq    TO taste_app;

@@ -9,8 +9,10 @@ CREATE ROLE taste_app LOGIN PASSWORD 'taste-dev-pass' NOSUPERUSER NOCREATEDB NOC
 -- 2. Real data.
 \connect household
 \i /docker-entrypoint-initdb.d/schema.psql
+\i /docker-entrypoint-initdb.d/household.psql
 
 -- 3. A separate database for the tests, so they never touch your real history.
 CREATE DATABASE household_test;
 \connect household_test
 \i /docker-entrypoint-initdb.d/schema.psql
+\i /docker-entrypoint-initdb.d/household.psql

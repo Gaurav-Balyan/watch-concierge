@@ -48,6 +48,8 @@ def serve_catalog(mode: str):
 
     if mode == "ok":
         lookup.find_title = search
+        from fixtures import find_videos
+        catalog_mcp.youtube.find_videos = find_videos     # no network for YouTube either
     elif mode == "rate_limited":
         async def limited(title, year=None, only=None):
             request = httpx.Request("GET", "https://eval.invalid/search")
@@ -107,8 +109,11 @@ def serve_device(mode: str):
             return None
 
         tv.connect_with_wake = fake_wake
-        for name in list(SERVICES):
-            SERVICES[name] = types.SimpleNamespace(DEFAULT_PLAY=True, open_title=noop_open)
+        # Patch the dict device_mcp ACTUALLY uses (Phase 3: services.PLAYABLE, which adds YouTube).
+        # Patching only services.SERVICES would leave device_mcp with the real service modules.
+        for registry in (SERVICES, device_mcp.SERVICES):
+            for name in list(registry):
+                registry[name] = types.SimpleNamespace(NAME=name, DEFAULT_PLAY=True, open_title=noop_open)
     else:
         raise ValueError(f"unknown device mode: {mode}")
     device_mcp.mcp.run()
