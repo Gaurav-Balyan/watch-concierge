@@ -6,8 +6,6 @@ profile selected, so the order is:
     launch -> wait for profile picker -> ENTER (first profile) -> home screen
     -> send link (lands on the title page) -> ENTER to press Play.
 """
-import asyncio
-
 from aiowebostv import WebOsClient
 
 import config
@@ -36,17 +34,17 @@ async def open_title(c: WebOsClient, netflix_id: str, press_play: bool = DEFAULT
         # but relaunching a still-running Netflix was also seen to bring up the picker.
         await tv.close_app(c, config.NETFLIX_APP)
         await c.launch_app(config.NETFLIX_APP)
-        await asyncio.sleep(config.NETFLIX_PICKER_WAIT)
+        await tv.pause("netflix picker", config.NETFLIX_PICKER_WAIT, ready=lambda: c.tv_state.current_app_id == config.NETFLIX_APP)
         await tv.press(c, tv.profile_keys(profile, config.NETFLIX_PICKER_LAYOUT), gap=0.8)
-        await asyncio.sleep(config.NETFLIX_HOME_WAIT)
+        await tv.pause("netflix home", config.NETFLIX_HOME_WAIT)
     elif c.tv_state.current_app_id != config.NETFLIX_APP:
         await c.launch_app(config.NETFLIX_APP)
-        await asyncio.sleep(config.NETFLIX_PROFILE_WAIT)
+        await tv.pause("netflix picker", config.NETFLIX_PROFILE_WAIT, ready=lambda: c.tv_state.current_app_id == config.NETFLIX_APP)
         await c.button("ENTER")                      # the highlighted profile
-        await asyncio.sleep(config.NETFLIX_HOME_WAIT)
+        await tv.pause("netflix home", config.NETFLIX_HOME_WAIT)
 
     await tv.send_link(c, config.NETFLIX_APP, content_id(netflix_id))
-    await asyncio.sleep(config.NETFLIX_TITLE_WAIT)
+    await tv.pause("netflix title page", config.NETFLIX_TITLE_WAIT)
     if press_play:
         await c.button("ENTER")
-        await asyncio.sleep(3)
+        await tv.pause("after play", 3)

@@ -141,6 +141,13 @@ python multi_agent.py "play The Friend 2025"
 python multi_agent.py "I don't like horror, and I love Christopher Nolan films"
 python multi_agent.py "play tum hi ho by arijit singh"           # songs: YouTube (search by name)
 ```
+The ROUTED concierge (Phase 3, Step 7): a router picks the cheapest path. Play, song and "is the TV on" run as
+code (0 model calls); taste and suggestions run as skills (`skills\*.md`); anything else goes to the team.
+The first line printed says which route was taken and why:
+```powershell
+python routed.py "play The Friend 2025"
+python routed.py "me and Mishika want to watch something tonight"
+```
 The TV uses the logged-in person's profile (Netflix: Gaurav 3, Mishika 4; Prime: Gaurav 1, Mishika 3).
 Mishika's Netflix profile is a Kids profile, so Netflix blocks mature titles there.
 
@@ -211,7 +218,8 @@ python tests\test_agent_recovery.py #  4  offline: Groq-rejected tool calls do n
 python tests\test_agent_loop.py     #  7  offline: record_watch is wired in by code, never by the model
 python tests\test_multi_agent.py    # 11  the team: handoffs, each agent's tools and tokens, whose taste
 python tests\test_tracing.py        #  7  spans: one trace per request, nesting, no tokens in spans
-python tests\test_household.py      #  9  household read: permission, consent, no history, audit, agents
+python tests\test_household.py      # 10  household read: permission, consent, no history, audit, agents
+python tests\test_routing.py        # 20  offline: router, workflow policies (0 model calls), skills
 ```
 Or all at once: `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
 not plain `pytest`: plain `pytest` can pick up Anaconda's base Python, which has none of the project's
@@ -222,7 +230,12 @@ Evals (quick mode, real Groq model, fake TV and catalog):
 python evals\selftest.py
 python evals\run_evals.py --reps 3 --label myrun
 python evals\run_evals.py --compare evals\results\<a>.json evals\results\<b>.json
+python evals\run_evals.py --agent team --reps 3 --label team    # Phase 3: the team, same cases
+python evals\run_evals.py --agent routed --reps 3 --label routed  # Phase 3, Step 7: router + workflows
 ```
+`--agent team` runs the Supervisor + Catalog agent on the same fake servers (no taste, no login). Each run also
+reports MODEL CALLS, so the team's cost shows next to its pass rate. A team run makes roughly twice as many Groq
+calls: add `--delay 2` if you hit rate limits.
 
 ---
 

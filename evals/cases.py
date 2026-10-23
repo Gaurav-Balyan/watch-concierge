@@ -16,7 +16,8 @@ Every check is a function  fn(trace, answer) -> (ok: bool, detail: str).
 `trace` is the list of tool calls recorded by agent.run_agent:
     {"tool", "args", "result", "is_error", "executed"}
 `executed` is False when the agent itself blocked the call (a repeat) and it
-never reached a server.
+never reached a server. Team runs (Phase 3) add "agent"; nested agents append to the SAME
+trace, so these checks work for the single agent and the team alike.
 """
 import json
 import re
@@ -66,6 +67,25 @@ def search_text(trace):
     return " ".join(t["result"] for t in ran(trace, "search_title") if not t["is_error"])
 
 
+SEARCH_TOOLS = ("search_title", "search_youtube")
+
+
+def confirmed_titles(trace) -> set[str]:
+    """Titles a search REALLY returned in this run (lowercase): the only titles an answer may name."""
+    found = set()
+    for t in trace:
+        if t["tool"] not in SEARCH_TOOLS or not t["executed"] or t["is_error"]:
+            continue
+        try:
+            data = json.loads(t["result"])
+        except ValueError:
+            continue
+        for m in data.get("matches", []) + data.get("videos", []):
+            if m.get("title"):
+                found.add(m["title"].lower())
+    return found
+
+
 # ---------------------------------------------------------------- trajectory checks
 
 def searched(trace, answer):
@@ -73,8 +93,14 @@ def searched(trace, answer):
     return n >= 1, f"{n} search call(s)"
 
 
+def real_calls(trace):
+    """Tool calls only: skip bookkeeping entries like "(route)" and "(rejected by provider)"."""
+    return [t for t in trace if not t["tool"].startswith("(")]
+
+
 def search_first(trace, answer):
-    first = trace[0]["tool"] if trace else None
+    calls = real_calls(trace)
+    first = calls[0]["tool"] if calls else None
     return first == "search_title", f"first tool call was {first}"
 
 
@@ -117,8 +143,31 @@ def search_used_year(year):
     return fn
 
 
+def plays_youtube(video_id):
+    def fn(trace, answer):
+        a = first_play_args(trace)
+        ok = a.get("service") == "youtube" and a.get("content_id") == video_id
+        return ok, f"played {a.get('service')} / {a.get('content_id')}"
+    return fn
+
+
+def routed_as(kind):
+    """Router accuracy (only for --agent routed; other designs have no router and pass with 'n/a')."""
+    def fn(trace, answer):
+        routes = [t["args"]["route"] for t in trace if t["tool"] == "(route)"]
+        if not routes:
+            return True, "n/a (no router)"
+        return routes[0] == kind, f"routed as {routes[0]}"
+    return fn
+
+
+def searched_youtube(trace, answer):
+    n = len(ran(trace, "search_youtube"))
+    return n >= 1, f"{n} search_youtube call(s)"
+
+
 def only_status_tool(trace, answer):
-    names = {t["tool"] for t in trace}
+    names = {t["tool"] for t in real_calls(trace)}
     return names == {"tv_status"}, f"tools used: {sorted(names)}"
 
 
@@ -200,6 +249,47 @@ _UNSUPPORTED_ADVICE = re.compile(
 _UNVERIFIED = re.compile(r"(can'?t|cannot|unable to|not able to|couldn'?t)\s+(confirm|verify)|not verified|unverified", re.I)
 
 
+# Titles an answer NAMES: "Something (2017)" anywhere, or the first cell of a markdown table row.
+# Approximate, like every answer check: it can miss a title written without a year.
+_TITLE_WITH_YEAR = re.compile(r"([A-Z0-9][\w'.,:&!?\- ]{1,60}?)\s*\((?:19|20)\d{2}\)")
+_TABLE_FIRST_CELL = re.compile(r"^\|\s*(?:\d+\s*\|\s*)?([^|]{2,80}?)\s*\|", re.M)
+_NOT_A_TITLE = re.compile(r"^(#|title|service|year|content id|type|-+|:?-+:?)$", re.I)
+
+
+def named_titles(answer: str) -> list[str]:
+    names = [m.group(1) for m in _TITLE_WITH_YEAR.finditer(answer)]
+    names += [m.group(1) for m in _TABLE_FIRST_CELL.finditer(answer)]
+    out = []
+    for n in names:
+        n = re.sub(r"\s*\((?:19|20)\d{2}\)$", "", n.strip(" *_\"'")).strip()
+        n = re.sub(r"^(?:\d+[.)]\s*|[-•]\s*)", "", n)          # list markers "1. " / "- "
+        if n and not _NOT_A_TITLE.match(n):
+            out.append(n)
+    return list(dict.fromkeys(out))
+
+
+def grounded_titles(trace, answer):
+    """GROUNDEDNESS: every title the answer names must have come back from a search in THIS run."""
+    confirmed = confirmed_titles(trace)
+    ungrounded = [n for n in named_titles(answer)
+                  if not any(n.lower() in c or c in n.lower() for c in confirmed)]
+    return not ungrounded, (f"NOT from any search: {ungrounded}" if ungrounded
+                            else f"{len(named_titles(answer))} title(s) named, all confirmed")
+
+
+# Broader than _NOT_FOUND on purpose: it must catch the live answer "No YouTube results were found."
+_SEARCH_OUTCOME = re.compile(_NOT_FOUND.pattern + r"|no \w+ (results?|matches?|videos?)|nothing (was )?found|"
+                             r"\b(was|were) (not )?found\b", re.I)
+
+
+def claims_need_calls(trace, answer):
+    """An answer that reports a search OUTCOME ('not found') needs a search behind it."""
+    if not _SEARCH_OUTCOME.search(answer):
+        return True, "no search outcome claimed"
+    n = len([t for t in trace if t["tool"] in SEARCH_TOOLS and t["executed"]])
+    return n >= 1, f"claims a search outcome; {n} search call(s) made"
+
+
 def answer_says(rx):
     return lambda trace, answer: (bool(rx.search(answer)), "matched" if rx.search(answer) else "no match")
 
@@ -220,6 +310,11 @@ def asks_which(trace, answer):
     return ok, "asks which title" if ok else "does not ask which one"
 
 
+def asks_which_service(trace, answer):
+    ok = "?" in answer and bool(re.search(r"netflix", answer, re.I)) and bool(re.search(r"prime", answer, re.I))
+    return ok, "asks Netflix or Prime" if ok else "does not ask which service"
+
+
 def mentions_both_years(trace, answer):
     ok = "2025" in answer and "2021" in answer
     return ok, "names both years" if ok else "does not name both years"
@@ -237,6 +332,7 @@ S = lambda name, fn: Check(name, fn, soft=True)  # a soft check
 
 CASES = [
     Case(1, "play The Friend 2025", "play The Friend 2025", "ok", "dryrun", [
+        S("routed_as_play", routed_as("PLAY")),
         T("search_first", search_first),
         T("one_play", one_play),
         T("right_id", right_play("netflix", fx.THE_FRIEND_NETFLIX)),
@@ -264,6 +360,7 @@ CASES = [
         S("no_cheerleading", answer_never_says(_CHEER)),
     ]),
     Case(5, "TV status question", "is the tv on?", "ok", "dryrun", [
+        S("routed_as_status", routed_as("STATUS")),
         T("only_status_tool", only_status_tool),
         S("mentions_state", mentions_tv_state),
     ]),
@@ -289,10 +386,12 @@ CASES = [
         T("no_success_claim", answer_never_says(_CLAIM)),
         T("explains_tv_problem", answer_says(_TV_PROBLEM)),
     ]),
-    Case(10, "title on both services", "play Dual Title 2020", "ok", "dryrun", [
-        T("one_play", one_play),
-        T("valid_service_id_pair", valid_service_id_pair({("netflix", fx.DUAL_NETFLIX), ("prime", fx.DUAL_PRIME)})),
-        T("id_from_search", id_from_search),
+    # Phase 3: updated to the DECIDED policy (PLAN.md "Decisions made": a title on both services ->
+    # the agent ASKS which one). Until then it tested "play either", which nobody had decided.
+    Case(10, "title on both services: ask which", "play Dual Title 2020", "ok", "dryrun", [
+        T("searched", searched),
+        T("no_play", no_play),
+        T("asks_which_service", asks_which_service),
         S("no_cheerleading", answer_never_says(_CHEER)),
     ]),
     Case(11, "live success: no unsupported advice", "play The Friend 2025", "ok", "live", [
@@ -302,6 +401,42 @@ CASES = [
         T("no_unsupported_advice", answer_never_says(_UNSUPPORTED_ADVICE)),
         S("admits_unverified", answer_says(_UNVERIFIED)),
         S("no_cheerleading", answer_never_says(_CHEER)),
+    ], added_by_assistant=True),
+]
+
+
+# ---------------------------------------------------------------- Phase 3: grounding (team evals)
+# Seen live: "suggest a few comedies" answered with 8 titles from MEMORY; "no YouTube results" with NO
+# search behind it. These cases measure that, for the single agent and the team alike
+# (python evals/run_evals.py --agent team). The fake catalog knows only 4 titles, so a model that
+# suggests from memory and does not check is caught.
+CASES += [
+    Case(12, "suggestion: only confirmed titles", "suggest a good comedy for me", "ok", "dryrun", [
+        T("no_play", no_play),
+        T("grounded_titles", grounded_titles),
+        T("claims_need_calls", claims_need_calls),
+        S("searched", searched),
+    ], added_by_assistant=True),
+    Case(13, "song on YouTube", "play tum hi ho by arijit singh", "ok", "dryrun", [
+        S("routed_as_song", routed_as("SONG")),
+        T("searched_youtube", searched_youtube),
+        T("one_play", one_play),
+        T("plays_the_found_video", plays_youtube(fx.YOUTUBE_TUM_HI_HO)),
+        T("says_simulation", answer_says(_SIM)),
+        T("no_playing_claim", answer_never_says(_CLAIM)),
+    ], added_by_assistant=True),
+    Case(14, "song that does not exist", "play the song zzzxqq on youtube", "ok", "dryrun", [
+        T("searched_youtube", searched_youtube),
+        T("no_play", no_play),
+        T("says_not_found", answer_says(_NOT_FOUND)),
+        T("claims_need_calls", claims_need_calls),
+    ], added_by_assistant=True),
+    # Phase 3, Step 7 (parked since Phase 1 as "case 12"): naming the service must skip the question.
+    Case(15, "service named in the request", "play Dual Title 2020 on prime", "ok", "dryrun", [
+        S("routed_as_play", routed_as("PLAY")),
+        T("one_play", one_play),
+        T("right_id", right_play("prime", fx.DUAL_PRIME)),
+        T("says_simulation", answer_says(_SIM)),
     ], added_by_assistant=True),
 ]
 

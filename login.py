@@ -32,6 +32,8 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
+import httpx2            # the HTTP library the mcp SDK uses (comes with mcp)
+
 import config
 
 CLIENT_ID = "concierge-cli"
@@ -139,6 +141,35 @@ def access_token_for(audience: str, extra_scopes: tuple[str, ...] = ()) -> str:
     if "refresh_token" in tokens:
         save_login(tokens)
     return tokens["access_token"]
+
+
+class RefreshingAuth(httpx2.Auth):
+    """Phase 4: an access token that renews itself, for one MCP connection (one audience).
+
+    Access tokens last 5 minutes; a long run (the team, a slow TV) used to keep the first one and get
+    401s halfway. Now each HTTP request gets a token that is still valid:
+      * PROACTIVE: shortly before `exp` (read from the token), fetch a new one (refresh grant)
+      * REACTIVE:  if the server still answers 401 (clock skew, Keycloak restarted), fetch a new one
+                   and send the request ONCE more. A second 401 is real: it goes back to the caller.
+    `fetch` returns a token (login.access_token_for, narrowed to this server's audience)."""
+
+    def __init__(self, fetch, margin: float = 30, clock=time.time):
+        self.fetch, self.margin, self.clock = fetch, margin, clock
+        self.token, self.expires_at, self.fetches = None, 0.0, 0
+
+    def current(self, force: bool = False) -> str:
+        if force or self.token is None or self.clock() >= self.expires_at - self.margin:
+            self.token = self.fetch()
+            self.expires_at = float(_claims(self.token).get("exp", 0))
+            self.fetches += 1
+        return self.token
+
+    def auth_flow(self, request):
+        request.headers["Authorization"] = f"Bearer {self.current()}"
+        response = yield request
+        if response.status_code == 401:
+            request.headers["Authorization"] = f"Bearer {self.current(force=True)}"
+            yield request
 
 
 # ----------------------------------------------------------------- browser login

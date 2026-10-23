@@ -196,5 +196,6 @@ def finish():
             print(f"\n(tracing: could NOT reach {config.OTLP_ENDPOINT}: {_jaeger.failed} spans lost. "
                   "Is Jaeger running? See SETUP.md)")
         else:
+            service = _provider.resource.attributes.get("service.name", "watch-concierge")
             print(f"\n(tracing: {_jaeger.sent} spans sent to Jaeger: open http://localhost:16686, "
-                  "service 'watch-concierge (team)' or '(single agent)')")
+                  f"service '{service}')")

@@ -46,7 +46,7 @@ class RecordingGroq:
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     async def _create(self, **kw):
-        self.calls.append({"tools": sorted(t["function"]["name"] for t in kw["tools"]),
+        self.calls.append({"tools": sorted(t["function"]["name"] for t in kw.get("tools", [])),  # router: none
                            "messages": [dict(m) for m in kw["messages"]]})
         return self.script.pop(0)
 
@@ -139,6 +139,24 @@ def test_a_youtube_link_is_not_a_video_id():
         reply(text="That was not a video id."),
     ], "play this")
     assert trace[0]["is_error"] and "INVALID_INPUT" in trace[0]["result"], trace[0]
+
+
+def test_eval_runner_scores_a_team_run():
+    # The eval runner with --agent team: the SAME case checks score the team's merged trace, and the
+    # model calls of BOTH agents are counted (2 Catalog + 3 Supervisor = 5).
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "evals"))
+    import run_evals
+    from cases import CASES_BY_ID
+    fake = RecordingGroq(list(HAPPY))
+    saved = agent.AsyncGroq, agent.SERVERS, run_evals.AGENT_KIND
+    agent.AsyncGroq, run_evals.AGENT_KIND = (lambda: fake), "team"
+    try:
+        rec = asyncio.run(run_evals.run_once(CASES_BY_ID[1], 1, retries=0, backoff=0))
+    finally:
+        agent.AsyncGroq, agent.SERVERS, run_evals.AGENT_KIND = saved
+    assert rec["status"] == "pass", {k: v for k, v in rec["checks"].items() if not v["ok"]}
+    assert rec["model_calls"] == 5, rec["model_calls"]
+    assert {t["agent"] for t in rec["trace"]} == {"catalog", "supervisor"}
 
 
 def test_supervisor_knows_the_youtube_route():

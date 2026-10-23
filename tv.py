@@ -2,14 +2,28 @@
 Everything that talks to the TV itself: connect, wake, press keys, send links.
 
 Nothing in here knows about Netflix, Prime or YouTube.
+
+PHASE 4: WAIT ON WHAT THE TV CAN TELL US, MEASURE WHAT IT CANNOT
+    The TV reports some things: is it on the network, its power state, which app is in front.
+    Those waits are now CHECKS that end as soon as the answer is known:
+      * a fully OFF TV never answers on the network (Wake-on-LAN cannot wake it): we give up after
+        TV_WAKE_WINDOW seconds instead of the old ~40-90 s connect loop
+      * a TV that is already ON skips the wake pauses and the post-wake settle (~8 s saved)
+    It does NOT report "the profile picker is drawn" or "the title page is open". Those waits stay
+    FIXED (pause()), but each is a span "tv wait <name>" that also records WHEN the app came to the
+    front: real numbers for tuning the fixed waits, with no change in behaviour.
 """
 import asyncio
+import time
 import warnings
 
 from aiowebostv import WebOsClient
 from wakeonlan import send_magic_packet
 
 import config
+import tracing
+
+TV_PORTS = (3001, 3000)       # webOS remote-control API: secure websocket, plain websocket
 
 
 class TVUnreachable(RuntimeError):
@@ -43,24 +57,95 @@ def send_wake():
         send_magic_packet(mac, ip_address=bcast)
 
 
+async def answers(ip: str, ports=None, timeout: float = 1.0) -> bool:
+    """Does the TV accept a TCP connection at all? (Quick: no handshake, no pairing.)"""
+    for port in ports or TV_PORTS:
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout)
+        except (OSError, asyncio.TimeoutError):
+            continue
+        writer.close()
+        return True
+    return False
+
+
+async def wait_for_network(window: float) -> float | None:
+    """After Wake-on-LAN: seconds until the TV answered on the network, or None within `window`."""
+    ip = config.require("TV_IP")
+    start = time.monotonic()
+    with tracing.span("tv network check", {"tv.wait.kind": "check", "tv.wake_window_s": window}) as s:
+        while (elapsed := time.monotonic() - start) < window:
+            if await answers(ip):
+                tracing.set_attrs(s, {"tv.answered_after_s": round(elapsed, 1)})
+                return elapsed
+            send_wake()
+            await asyncio.sleep(1)
+        tracing.set_attrs(s, {"tv.answered_after_s": None, "tv.outcome": "no answer"})
+    return None
+
+
+def power_state(power) -> str:
+    return str(power.get("state") if isinstance(power, dict) else power)
+
+
+async def wait_until(name: str, check, timeout: float, interval: float = 0.5) -> float | None:
+    """A CHECKED wait: poll `await check()` until True. Seconds it took, or None at the timeout."""
+    start = time.monotonic()
+    with tracing.span(f"tv wait {name}", {"tv.wait.kind": "check", "tv.wait.timeout_s": timeout}) as s:
+        while True:
+            elapsed = time.monotonic() - start
+            if await check():
+                tracing.set_attrs(s, {"tv.wait.took_s": round(elapsed, 1)})
+                return elapsed
+            if elapsed >= timeout:
+                tracing.set_attrs(s, {"tv.wait.took_s": None, "tv.outcome": "timed out"})
+                return None
+            await asyncio.sleep(interval)
+
+
+async def pause(name: str, seconds: float, ready=None):
+    """A FIXED wait, for what the TV cannot report. With `ready` (a plain function), also record WHEN it
+    first became true, e.g. 'Netflix is the foreground app': data for tuning `seconds`, no change in
+    behaviour (the full wait still happens)."""
+    start, seen = time.monotonic(), None
+    with tracing.span(f"tv wait {name}", {"tv.wait.kind": "fixed", "tv.wait.seconds": seconds}) as s:
+        while (elapsed := time.monotonic() - start) < seconds:
+            if ready is not None and seen is None and ready():
+                seen = elapsed
+            await asyncio.sleep(min(0.5, seconds - elapsed))
+        if ready is not None:
+            tracing.set_attrs(s, {"tv.ready_after_s": None if seen is None else round(seen, 1)})
+
+
 async def connect_with_wake(max_wait: int = 90) -> WebOsClient:
     """Always wake first, then retry connecting until the TV accepts.
 
     Waking first matters: in standby some TVs still accept the network
     connection while the screen stays off, so waiting for a failed connect
     before sending the packet would never wake them.
+    Phase 4: a quick network check first (fail fast when the TV is fully off), and the
+    post-wake settle only when the TV was actually waking up.
     """
     for _ in range(3):
         send_wake()
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.2)
+    if await wait_for_network(config.TV_WAKE_WINDOW) is None:
+        raise TVUnreachable(
+            f"no answer on the network within {config.TV_WAKE_WINDOW}s after Wake-on-LAN: the TV is "
+            "probably fully off (Wake-on-LAN only wakes it from standby) or not on this network")
 
     waited = 0
     last_error = "none"
     while waited < max_wait:
         try:
             c = await asyncio.wait_for(connect(), 8)
-            print("Connected. Power state:", await c.get_power_state())
-            await asyncio.sleep(config.POST_WAKE_WAIT)   # let the screen come up
+            state = power_state(await c.get_power_state())
+            print("Connected. Power state:", state)
+            if state != "Active":                       # it was waking: wait for the screen, then settle
+                async def screen_on():
+                    return power_state(await c.get_power_state()) == "Active"
+                await wait_until("screen on", screen_on, timeout=20)
+                await pause("after wake", config.POST_WAKE_WAIT)
             return c
         except Exception as e:  # noqa: BLE001
             waited += 10
@@ -118,7 +203,7 @@ async def close_app(c: WebOsClient, app: str):
         await c.close_app(app)
     except Exception as e:  # noqa: BLE001
         print("  close_app failed or app not running, continuing:", type(e).__name__, e)
-    await asyncio.sleep(3)
+    await pause(f"{app} closing", 3, ready=lambda: c.tv_state.current_app_id != app)
 
 
 async def close_app_if_open(c: WebOsClient, app: str):
@@ -131,4 +216,4 @@ async def close_app_if_open(c: WebOsClient, app: str):
             await c.close_app(app)
         except Exception as e:  # noqa: BLE001
             print("  close_app failed, continuing:", type(e).__name__, e)
-        await asyncio.sleep(3)
+        await pause(f"{app} closing", 3, ready=lambda: c.tv_state.current_app_id != app)

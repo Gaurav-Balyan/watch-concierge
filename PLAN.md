@@ -214,7 +214,7 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   TV used the highlighted (gaurav) profile. Default: run all servers over HTTP when logged in, or have the agent
   refuse a TV action over stdio while a login is active.
 
-## Phase 3: IN PROGRESS (multi-agent orchestration, hand-written, no framework)
+## Phase 3: DONE (multi-agent orchestration, routing + skills; hand-written, no framework), completed 2026-10-23
 - Step 1 DONE: the loop moved from run_agent() into a reusable `Agent(name, system, servers, after_tool=...)`
   in `agent.py`. `concierge()` builds the old all-in-one agent, so run_agent(), evals and tests are unchanged
   (system prompt hash identical). record_watch is now the concierge's `after_tool` hook. Trace lines and trace
@@ -348,11 +348,141 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   tool call yet answered "No YouTube results were found". Prompt now forbids reporting a result without a tool
   call ("the tool is not available" instead). Eval idea: an answer that claims a search outcome must have a
   matching tool call in the trace (same family as 12b and groundedness).
-- Next: team evals. First check to build: GROUNDEDNESS (every title named in the final answer appears in a
-  search_title result in the trace), on cases like "suggest a comedy" and "me and Mishika ...", for the
-  single agent vs the team. Plus the parked overclaim check. Then HANDOFF/SETUP.
+- Step 6 DONE (sandbox; user's real Groq runs pending): TEAM EVALS. `evals/run_evals.py --agent single|team`
+  (team = multi_agent.run_team on the same fake stdio servers: Supervisor + Catalog agent, no taste/login).
+  Same checks for both: nested agents write to the same trace. Every run counts MODEL CALLS (a wrapper around
+  whatever client is installed); report and --compare show calls and seconds per case next to pass rates;
+  fingerprint has "agent". New checks: grounded_titles (every "Title (Year)" / table first cell in the answer
+  must come back from a search in THIS run; approximate) and claims_need_calls (an answer reporting a search
+  outcome needs a search call; broader pattern so "No YouTube results were found." matches). New cases:
+  12 suggestion -> only confirmed titles (the fake catalog knows 4 titles, so memory suggestions are caught),
+  13 song on YouTube, 14 song that does not exist. Case 10 updated to the DECIDED policy (both services ->
+  ask), so old case-10 results are not comparable. The Supervisor's "never name an unconfirmed title" rule
+  moved to its BASE prompt (it lived only in the taste-dependent Consensus line, so the evals never saw it).
+  Self-test: scripted model passes all 14; new misbehaviours caught (from_memory -> grounded_titles,
+  no_call_claim -> claims_need_calls, play_both -> no_play; double_play moved to case 1). The scripted model
+  plays ONE agent, so a pytest proves the runner scores a team run (case 1, 5 calls counted). 100 tests.
+  Learned: evaluate a multi-agent system on the TRACE (what each agent really did), not only on the answer;
+  measure cost (model calls) next to quality, or a team looks free; a check must be tested on the exact text
+  that motivated it (the first claims_need_calls pattern missed the live sentence).
+- Team evals RUN (2026-10-23, gpt-oss-120b, 3 reps): single 34/42, 2.3 model calls/run, ~6-9 s; team 39/42,
+  3.7 calls/run (~1.6x), ~10-20 s (~2x). Team wins #10 (3/3 vs 0/3: only the team prompt has the "ask which
+  service" POLICY), #12 (3/3 vs 0/3: single listed 9 titles from memory twice, hit the turn limit once), #11
+  (3/3 vs 1/3 hedging). Team loses #8 rate limit (1/3: system problem not explained, probably lost in the
+  double handoff; need --show answers) and #13 (2/3: "started playing" after a dry run). 3 team runs had a
+  Groq rejection (recovered, +15-20 s each).
+  CAUTION: team #12 passed with 1 call and NO search: it declined to suggest. Grounded but unhelpful; a check
+  that only forbids can be passed by doing nothing. Parked: a helpfulness check (at least one confirmed title
+  when the catalog has a fitting one).
+  Seen live: "The diplomat" -> the Supervisor INVENTED year 2026 -> not found -> "not available in India"
+  (false). Prompt said "title and year if known". Fixed: a year only if the person said one.
+- Discussion 2026-10-23 (no code changes): what a "model call" is (one Groq request; tool runs are code),
+  why the team costs more (each extra agent = at least 2 calls + its own prompt; nested agents multiply:
+  "me and Mishika" = 13 calls), what it buys (mainly: a model reading untrusted text holds no action tools
+  or extra permissions; also focused context, separate parts), and that the eval gain came mostly from
+  prompt POLICIES, not structure. Rule of thumb: an agent where judgement is needed, plain code where not
+  (Consensus yes, Taste mostly, Catalog agent mostly not).
+  DECIDED: before LangGraph, a small hand-written ROUTING step (Step 7); then HANDOFF; then Phase 4 ports
+  it to LangGraph (nodes call McpToolbox directly; no LangGraph MCP adapter needed) and adds resilience.
+- Step 7 PLANNED: routing (workflow vs agent).
+  * Router: rules first (e.g. "on youtube", song + artist -> SONG; "suggest", "me and X" -> SUGGEST;
+    "I like / I don't like" -> TASTE; "is the tv on" -> STATUS; "play <title>" -> PLAY), a small cheap Groq
+    model only when the rules are unsure; anything unclear -> FALLBACK (the current team).
+  * PLAY = a code workflow: search_title -> 0 matches: not found | several: ask which | both services: ask
+    which | one: play_title; the model only writes the final sentence. Policies become CODE (both services
+    -> ask; a year only if the person gave one; only confirmed titles), guaranteed and unit-testable. The
+    content id goes search -> play by code (no Catalog agent, no copying through two models).
+  * SONG = a code workflow: search_youtube -> play the first video (or say nothing found).
+  * Each route requests only its own tokens (least privilege per route stays).
+  * Evals: `--agent routed`; single vs team vs routed on the same 14 cases (calls + quality); add
+    router-accuracy cases (e.g. "the diplomat tv series", a film named like a song).
+  * Skills (DECIDED 2026-10-23): a route IS a skill (which instructions + which tools + which tokens).
+    Agent routes (TASTE, SUGGEST) are defined as files, e.g. skills/group_suggestion.md: frontmatter with
+    name, description, tools, scopes, max_turns; body = the instructions. The ROUTER (code) picks the skill:
+    0 extra model calls. Prompts leave Python; a new capability = a new skill file; each file shows its
+    tools and permissions; the eval fingerprint records which skill file changed.
+    Workflow routes (PLAY, SONG) stay plain code: their rules must be guarantees, not instructions.
+    Model-chosen skills (a load_skill tool, "progressive disclosure", +1 call) = optional later experiment
+    for the FALLBACK agent only. In Phase 4 each skill becomes the config of one LangGraph agent node.
+- Step 7 DONE (sandbox; user's real Groq runs pending): routing + workflows + skills.
+  New: router.py (rules first; ROUTER_MODEL = optional small model, 1 call, only when rules are unsure;
+  otherwise FALLBACK), workflows.py (PLAY, SONG, STATUS as code, 0 model calls, template answers),
+  skills.py + skills/taste.md + skills/suggest.md (JSON header: servers, offer/hide, scopes, local_tools,
+  max_turns; body = instructions; the team and the router share them), routed.py (entry point; trace gets a
+  "(route)" entry and a "route <KIND>" span). agent.call_traced: tool calls made by CODE get the same span
+  and trace entry as a model's. Consensus now checks titles with check_titles (code, parallel) instead of
+  nested Catalog agents: "me and Mishika" ~13 -> ~5 model calls in the team too.
+  Policies now CODE in the workflows: a year only if typed; both services -> ask; a named service is used
+  ("on prime", parked since Phase 1); several titles -> ask; system error is not "not found"; the id goes
+  search -> play by code; never claims playback.
+  Evals: --agent routed; case 15 (service named); soft routed_as checks; checks skip "(...)" entries.
+  Sandbox: 10 workflow cases (1,2,5,8,9,10,11,13,14,15) pass with a model that RAISES if called: 0 calls.
+  Includes #8 and #13, which the team failed sometimes. tests/test_routing.py (20) + 2 tests updated.
+  Mutation-checked (both-services policy off; system error as "not found"; invented year; named service
+  ignored). 120 tests total.
+  Learned: workflow vs agent; policies as code are guarantees, prompt policies are requests; a router
+  must only claim what it is sure of (unclear -> fallback, not a guess); a route = instructions + tools +
+  tokens = a skill; a code tool (check_titles) can replace a whole agent that only copied results.
+  Known: routed answers are plain templates; TASTE/SUGGEST answers come straight from the skill agent (its
+  prompt says "another agent reads this": fine but a bit formal); the rules are English-only.
+- Seen live (2026-10-23): "play taaki taaki rumba on you tube" -> PLAY (rule wanted "youtube" as one word)
+  -> film search -> honest "not found". A MISROUTE, the failure mode routing adds. Fixed: "you tube" / "yt"
+  accepted; 2 routing-table tests. Still open: a song with no YouTube word and no "by" ("play kesariya")
+  routes to PLAY. Options (not built): PLAY with 0 matches tries YouTube before answering (a fallback
+  chain), or ROUTER_MODEL for such cases. Tracing's closing line now names the real service.
+- Seen live: a YouTube title of ~120 characters was refused by record_watch (limit 100): the song played
+  but history was not written, and the trace looked fine (the recorder called the tool untraced). Fixed:
+  agent.history_title() shortens to <= 100 at a word with an ellipsis (taste-mcp keeps its own limit:
+  defence in depth), and a failed record_watch now marks the recorder's span as an ERROR.
+  Learned: bookkeeping that fails must be visible; a span that only covers the happy path lies.
+- Seen live: ROUTER_MODEL=llama-3.1-8b-instant (the .env.example EXAMPLE) is not available to the user's key:
+  404 on every routed request, and the eval runner treated it as "infra" (waited 30 s, 60 s, retried).
+  Fixed: a failing router model -> FALLBACK to the team (span marked ERROR, one printed line); the eval
+  runner classes NotFound/Authentication/PermissionDenied as "config": no retry, and the run STOPS with a
+  clear message. .env.example no longer names a model. Test added (22 in test_routing).
+  Learned: an OPTIONAL helper must fail soft; and retrying only helps for errors that can go away.
+- ROUTED evals RUN (2026-10-23, gpt-oss-120b + a working ROUTER_MODEL, 3 reps, 15 cases): 42/45, 0.4 model
+  calls/run, ~2.6 s/run. Compare: single 34/42 (2.3 calls, 6-9 s), team 39/42 (3.7 calls, 10-20 s). All 10
+  workflow cases 3/3 with 0 calls (incl. #8 and #13, which the team failed sometimes); #3 3/3 via the router
+  model (1 call). #4 "game changer 2025" 0/3: BUG, the router-MODEL path skipped the rules' parsing, so the
+  year stayed in the title and the search found nothing. Fixed: model PLAY titles go through parse_play;
+  a year the model adds (not in the person's words) is dropped. +1 test, 123 tests total.
+  #12 still passes by declining (no taste server in the evals: SUGGEST -> team), as in team3.
+  Learned: two paths into the same workflow must share the same input handling; the eval found what the
+  unit tests did not, because the tests only fed the model path a clean title.
+- HANDOFF.md written (Phase 3 closed). Next: Phase 4 in a new chat (see HANDOFF.md "Phase 4 starting point").
 
-## Phases 4-5: NOT STARTED
+## Phase 4: Resilience + LangGraph (IN PROGRESS)
+- Step 1 (2026-10-23): `graph.py`, the routed design as a LangGraph 1.2 graph, THIN: nodes route, play,
+  fallback; conditional edges after_route (PLAY -> play, else fallback) and after_play (None = "not mine" ->
+  fallback, else END). Nodes call the existing router / workflows / team (McpToolbox as before; no LangGraph
+  MCP adapter, so no clash with mcp 2.3.0). State = request, route (plain dict), answer: JSON-only, ready
+  for a checkpointer. The trace list is per-run CONTEXT (runtime.context), never state. LangGraph emits no
+  OpenTelemetry spans, so each node opens "node <name>" under one "graph" span. `python graph.py --draw`
+  prints the shape (Mermaid). Evals: `--agent graph`. 7 tests (test_graph.py): shape, parity with routed.py
+  on 6 PLAY requests (same answer + same tool calls, 0 model calls), both edges, spans, plain state;
+  mutation-checked (each broken edge fails its test). Dry eval run (no Groq): the 7 PLAY cases pass with 0
+  calls exactly as routed; SONG/STATUS (#5, #13, #14) go to the team for now (thin graph): they cost calls.
+  Learned: the graph turns dispatch()'s if/else into DATA (nodes + edges) that the framework can draw,
+  save between nodes and resume; what it hides is the run loop; what it does not give is our tracing.
+  (Then:) Step 2 = the remaining routes as nodes (SONG, STATUS, TASTE, SUGGEST), then real evals with Groq.
+- Real graph evals (Step 1, 3 reps): 40/45, 1.1 calls/run. #13/#14 (songs via the team) 2/3 each, ~20 s, 4-5
+  calls: the thin graph's expected price. #4 "game changer 2025" 0/3: BUG in router.py (both entries): the
+  router MODEL returned title "game changer", DROPPING the typed year -> 2 matches -> asked. Fixed: a year or
+  service the person typed is taken from their words whatever the model says (an invented one still dropped).
+  +1 test (24 in test_routing), mutation-checked. Learned: guard BOTH directions of a model rewriting input.
+- Step 2 (2026-10-23): every route is a node: play, song, status (code workflows), taste, suggest (skill
+  agents), fallback (the team). Edges: after_route (workflow kinds -> their node; TASTE/SUGGEST -> taste or
+  suggest only with a taste server, else fallback), after_workflow (play/song: None -> fallback), status ->
+  END, after_taste (SUGGEST -> suggest, else END). "I like comedy, suggest ..." = taste THEN suggest: two
+  nodes + an edge instead of two awaits in one function, so Step 3's checkpointer saves the state between
+  them (a crash in suggest will not re-save the taste). 11 graph tests: parity with routed.py on 9 PLAY / SONG
+  / STATUS requests (same answers + tools, 0 calls); taste/suggest WIRING with fake skill agents (which node,
+  order, whose answer wins, username from the login); no taste server -> the team. 4 mutations, each fails
+  its test. Dry evals (no Groq): graph == routed on all 10 no-model cases, #5/#13/#14 back to 0 calls.
+  Next: real graph evals + --compare with routed; then Step 3 = checkpointing + a crash drill.
+
+## Phase 5: NOT STARTED
 
 ## Known fragile points carried forward
 - All waits are fixed sleeps, not checks (matters for Phase 4).

@@ -4,11 +4,10 @@ YouTube flow. The deep link works any time, with no profile step.
 Unlike Netflix and Prime, YouTube is searched by name (via yt-dlp), not by a
 streaming-catalogue ID, so it is not part of SERVICES.
 """
-import asyncio
-
 from aiowebostv import WebOsClient
 
 import config
+import tv
 
 # Phase 3: the same interface as netflix.py / prime.py, so device-mcp can play YouTube too.
 NAME = "youtube"
@@ -50,5 +49,5 @@ async def open_title(c: WebOsClient, content_id: str, press_play: bool = True, *
 async def play(c: WebOsClient, video_id: str):
     params = {"contentTarget": f"https://www.youtube.com/watch?v={video_id}"}
     print(await c.launch_app_with_params(config.YOUTUBE_APP, params))
-    await asyncio.sleep(8)
+    await tv.pause("youtube start", 8, ready=lambda: c.tv_state.current_app_id == config.YOUTUBE_APP)
     print("current app:", c.tv_state.current_app_id)

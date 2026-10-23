@@ -9,5 +9,7 @@ pyjwt[crypto]>=2.8
 psycopg[binary]>=3.1
 opentelemetry-sdk==1.45.1
 opentelemetry-exporter-otlp-proto-http==1.45.1
+# Phase 4: the graph (graph.py). Nodes call McpToolbox directly; no LangGraph MCP adapter.
+langgraph>=1.2,<2
 # tests: run with  python -m pytest tests  (or each file: python tests\test_<name>.py)
 pytest>=8

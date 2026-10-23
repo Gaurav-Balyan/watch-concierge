@@ -6,6 +6,7 @@ with the outside world swapped out:
 
   catalog modes:  ok            fixed catalog from fixtures.py
                   rate_limited  every search hits a simulated HTTP 429
+                  down          the API does not answer; the REAL cache, retries and breaker run (Phase 4)
   device modes:   dryrun        the real dry-run behaviour
                   unreachable   the TV never answers (real TV_UNREACHABLE path)
                   live          a pretend TV that always succeeds, so play_title
@@ -21,6 +22,10 @@ import sys
 import tempfile
 import types
 from pathlib import Path
+
+# Phase 4: the fakes keep their idempotency records, cache and breaker away from your real .state/.
+# A FIXED folder (not one per process): a resumed drill run must see the records of the crashed one.
+EVAL_STATE = Path(tempfile.gettempdir()) / "watch_concierge_eval_state"
 
 import httpx
 
@@ -50,6 +55,14 @@ def serve_catalog(mode: str):
         lookup.find_title = search
         from fixtures import find_videos
         catalog_mcp.youtube.find_videos = find_videos     # no network for YouTube either
+    elif mode == "down":
+        # Phase 4: the OUTSIDE API is down, but the real cache + retries + circuit breaker run (lookup.py).
+        import config
+        config.STATE_DIR = EVAL_STATE
+
+        async def outage(title):
+            raise httpx.ConnectError("simulated outage: the catalog API does not answer")
+        lookup._api_search = outage
     elif mode == "rate_limited":
         async def limited(title, year=None, only=None):
             request = httpx.Request("GET", "https://eval.invalid/search")
@@ -68,6 +81,7 @@ def serve_device(mode: str):
     logsetup.LOG_DIR = Path(tempfile.gettempdir()) / "watch_concierge_eval_logs"
 
     import config
+    config.STATE_DIR = EVAL_STATE
     import device_mcp
     import tv
     from services import SERVICES
@@ -106,7 +120,10 @@ def serve_device(mode: str):
             return FakeTV()
 
         async def noop_open(c, content_id, press_play):
-            return None
+            # Every pretend LAUNCH is written down: the crash drills count them (a duplicate = a bug).
+            EVAL_STATE.mkdir(parents=True, exist_ok=True)
+            with open(EVAL_STATE / "launches.log", "a", encoding="utf-8") as f:
+                f.write(content_id + "\n")
 
         tv.connect_with_wake = fake_wake
         # Patch the dict device_mcp ACTUALLY uses (Phase 3: services.PLAYABLE, which adds YouTube).

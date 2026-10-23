@@ -17,6 +17,10 @@ design is about safety and honesty:
   * CLASSIFIED FAILURES. Each failure says whether retrying is sensible. This
     matters because a blind retry could launch a title twice.
   * ONE ACTION AT A TIME. A second call while one is running is rejected.
+  * IDEMPOTENT (Phase 4). The client sends an idempotency_key per request (the model never sees it).
+    The intent is recorded BEFORE the TV is touched and the result AFTER, in .state/device_actions.sqlite,
+    so a retry or a resumed request with the same key gets the first result back ("duplicate": true)
+    instead of launching the title again, even after a crash or a server restart.
 
 stdout WARNING: this is a stdio server, and tv.py prints progress. The SDK
 diverts stdout while serving, but that is best-effort, so every TV action also
@@ -47,6 +51,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 import config
+import resilience
 import tracing
 import tv
 from auth import McpTokenVerifier, caller_name
@@ -80,6 +85,18 @@ ID_PATTERNS = {
     "prime": re.compile(r"^amzn1\.dv\.gti\.[0-9a-fA-F-]{8,64}$"),
     "youtube": re.compile(r"^[A-Za-z0-9_-]{11}$"),
 }
+KEY_PATTERN = re.compile(r"^[A-Za-z0-9:_-]{8,100}$")
+_actions: resilience.IdempotencyStore | None = None
+
+
+def actions() -> resilience.IdempotencyStore:
+    """Opened on first use, so the evals and tests can point config.STATE_DIR elsewhere first."""
+    global _actions
+    if _actions is None:
+        _actions = resilience.IdempotencyStore(config.STATE_DIR / "device_actions.sqlite")
+    return _actions
+
+
 ID_HINTS = {
     "netflix": "digits only, e.g. 82182295",
     "prime": "an id like amzn1.dv.gti.<uuid> (not a link)",
@@ -134,7 +151,8 @@ async def tv_status() -> dict:
 
 @mcp.tool(annotations=ToolAnnotations(
     read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True))
-async def play_title(service: Literal["netflix", "prime", "youtube"], content_id: str, title: str = "") -> dict:
+async def play_title(service: Literal["netflix", "prime", "youtube"], content_id: str, title: str = "",
+                     idempotency_key: str = "") -> dict:
     """Open a title on the living-room TV, waking the TV first if needed.
 
     Only call this with a service and content_id returned by search_title, or with
@@ -150,8 +168,12 @@ async def play_title(service: Literal["netflix", "prime", "youtube"], content_id
         content_id: The id for that service, exactly as returned by search_title.
         title: The title name, for logging only.
     """
+    # idempotency_key is deliberately NOT in the docstring (the model reads it): McpToolbox fills it in
+    # from the request id and hides it from the model's schema. Empty = an old client: no protection.
     # 1. VALIDATE before anything else. Pydantic already enforced the service enum.
     content_id = content_id.strip()
+    if idempotency_key and not KEY_PATTERN.match(idempotency_key):
+        raise ToolError("INVALID_INPUT: idempotency_key has an unexpected format. Retrying will fail again.")
     if not ID_PATTERNS[service].match(content_id):
         raise ToolError(
             f"INVALID_INPUT: content_id {content_id!r} is not a valid {service} id "
@@ -188,11 +210,33 @@ async def play_title(service: Literal["netflix", "prime", "youtube"], content_id
             "wait for the first to finish."
         )
 
+    # 4. IDEMPOTENCY: claim the key BEFORE touching the TV (Phase 4).
+    what = {"service": service, "content_id": content_id}
+    if idempotency_key:
+        status, earlier, earlier_result = actions().begin(idempotency_key, what)
+        if status != "new":
+            log.warning("play_title REPEAT of key %s (%s, earlier %s): not launching again",
+                        idempotency_key, status, earlier)
+            tracing.set_attrs(tracing.trace.get_current_span(), {"tv.idempotent_repeat": status})
+            if earlier != what:
+                raise ToolError(
+                    f"ALREADY_PLAYED: this request already asked for {earlier['service']} / "
+                    f"{earlier['content_id']}. Only one title per request; nothing new was launched.")
+            if status == "done":
+                return {**earlier_result, "duplicate": True,
+                        "message": "This request already sent these commands (an earlier attempt), so "
+                                   "nothing was sent again. " + earlier_result.get("message", "")}
+            raise ToolError(
+                "UNKNOWN_STATE: an earlier attempt of this same request started opening this title and did not "
+                "finish (crash or timeout). Not launching it again; ask the user to check the TV.")
+
     async with _action_lock:
         try:
             await asyncio.wait_for(_open(svc, content_id, profile), ACTION_TIMEOUT)
         except tv.TVUnreachable as e:
             log.error("play_title TV_UNREACHABLE: %s", e)
+            if idempotency_key:
+                actions().forget(idempotency_key)      # certainly nothing launched: a retry may try again
             raise ToolError(
                 f"TV_UNREACHABLE: {e}. Nothing was launched. "
                 "Retrying is reasonable once the TV is on and on the network."
@@ -235,6 +279,8 @@ async def play_title(service: Literal["netflix", "prime", "youtube"], content_id
             "The title page should be open on the TV, but Play was not pressed. "
             "The user needs to press Play with the remote."
         )
+    if idempotency_key:
+        actions().finish(idempotency_key, result)
     return result
 
 

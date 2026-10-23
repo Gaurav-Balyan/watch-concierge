@@ -43,6 +43,7 @@ import asyncio
 
 import config
 import lookup
+import resilience
 import tracing
 from services import youtube
 from auth import McpTokenVerifier
@@ -86,6 +87,12 @@ async def search_title(title: str, year: str | None = None) -> dict:
     # details stay in the server log (so internals never leak to the model).
     try:
         matches = await lookup.find_title(title, year or None)   # models sometimes send "" for year
+    except resilience.CircuitOpen as e:
+        # Phase 4: the API failed several times in a row, so we are not calling it for a while.
+        raise ToolError(
+            f"CATALOG_UNAVAILABLE: the catalog service is failing, so lookups are paused for "
+            f"{e.retry_in:.0f}s. This is a system problem, not a missing title. Try again later."
+        ) from e
     except httpx.HTTPStatusError as e:
         status = e.response.status_code
         if status == 429:

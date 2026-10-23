@@ -89,6 +89,35 @@ class ScriptedModel:
                     if n == 0 else say("Done.")
             return say("What would you like to watch? Tell me a movie or series, and I will find it.")
 
+        # Phase 3, Step 7: the service named in the request (case 15)
+        if request.endswith(" on prime"):
+            if n == 0:
+                return call("search_title", {"title": "Dual Title", "year": "2020"})
+            if '"count"' in last:
+                m = json.loads(last)["matches"][0]
+                return call("play_title", {"service": "prime", "content_id": m["ids"]["prime"], "title": m["title"]})
+
+        # Phase 3: suggestions (case 12) must name only titles a search returned
+        if "suggest" in request:
+            if "from_memory" in f:
+                return say("Try The Big Sick (2017) or Crazy Rich Asians (2018), both great comedies.")
+            if n == 0:
+                return call("search_title", {"title": "The Friend", "year": "2025"})
+            return say("I could confirm one title in the catalog: The Friend (2025) on Netflix. Shall I play it?")
+
+        # Phase 3: songs go to YouTube (cases 13, 14)
+        if "youtube" in request or "tum hi ho" in request:
+            if n == 0:
+                if "no_call_claim" in f:
+                    return say("No YouTube results were found for that song.")
+                return call("search_youtube", {"query": request.replace("play ", "")})
+            if '"videos"' in last:
+                data = json.loads(last)
+                if data["count"] == 0:
+                    return say("I couldn't find that song on YouTube.")
+                v = data["videos"][0]
+                return call("play_title", {"service": "youtube", "content_id": v["video_id"], "title": v["title"]})
+
         m = re.match(r"^(?:play )?(.+?)(?: (\d{4}))?$", request)
         title, year = m.group(1), m.group(2)
 
@@ -126,6 +155,9 @@ class ScriptedModel:
                 return say("I found two titles called Game Changer. Which one do you mean, the 2025 one on Prime or the 2021 one on Netflix?")
             # with play_anyway, an ambiguous result falls through and plays the first match
             match = data["matches"][0]
+            if len(match["ids"]) > 1 and "play_both" not in f and "play_anyway" not in f:
+                # Decided policy (PLAN.md): a title on both services -> ask which one.
+                return say(f"{match['title']} ({match['year']}) is on both Netflix and Prime. Which one would you like?")
             service = "netflix" if "netflix" in match["ids"] else "prime"
             content_id = match["ids"][service]
             if "invented_id" in f:
@@ -172,7 +204,7 @@ def suite_good() -> bool:
     results = run_cases(sorted(CASES_BY_ID))
     run_evals.report(results, show=True)
     bad = [r["case"] for r in results["runs"] if r["status"] != "pass"]
-    print("\nRESULT:", "OK, all 11 cases pass" if not bad else f"PROBLEM: cases failing with a good model: {bad}")
+    print("\nRESULT:", f"OK, all {len(CASES_BY_ID)} cases pass" if not bad else f"PROBLEM: cases failing with a good model: {bad}")
     return not bad
 
 
@@ -184,7 +216,11 @@ BAD = [
     ("hedge",          [11],          {11: "no_unsupported_advice"}),
     ("claim_playing",  [1, 9],        {1: "no_playing_claim", 9: "no_success_claim"}),
     ("invented_id",    [4],           {4: "id_from_search"}),
-    ("double_play",    [10],          {10: "one_play"}),
+    ("double_play",    [1],           {1: "one_play"}),
+    # Phase 3 (team evals): the grounding checks must catch what was seen live
+    ("from_memory",    [12],          {12: "grounded_titles"}),
+    ("no_call_claim",  [14],          {14: "claims_need_calls"}),
+    ("play_both",      [10],          {10: "no_play"}),
 ]
 
 

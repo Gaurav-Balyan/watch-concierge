@@ -159,7 +159,8 @@ def test_only_the_consensus_agent_holds_the_permission():
         agent.SERVERS = saved
     assert [aud for aud, _ in requested] == ["taste-mcp", "taste-mcp+taste-household-read"], requested
     assert "get_household_taste" not in taste_offered and "set_household_sharing" in taste_offered
-    assert consensus_offered == {"get_household_taste", "ask_catalog_agent"}, consensus_offered
+    # Step 7: titles are checked by check_titles (code, parallel), not by nested Catalog agents.
+    assert consensus_offered == {"get_household_taste", "check_titles"}, consensus_offered
 
 
 def test_supervisor_is_told_who_me_is():
@@ -193,14 +194,13 @@ def test_taste_agent_cannot_call_the_household_tool_even_if_it_tries():
     assert t["agent"] == "taste" and t["executed"] is False and "Unknown tool" in t["result"]
 
 
-def test_team_supervisor_consensus_catalog():
+def test_team_supervisor_consensus_check_titles():
     question = "Watching: gaurav, mishika. Request: something we would both like"
+    titles = json.dumps({"titles": [{"title": "The Friend", "year": "2025"}, {"title": f"Nope {RUN}"}]})
     script = [
         reply(calls=[("ask_consensus_agent", json.dumps({"question": question}))]),           # supervisor
         reply(calls=[("get_household_taste", '{"names": ["gaurav", "mishika"]}')]),           # consensus
-        reply(calls=[("ask_catalog_agent", '{"question": "Where is The Friend (2025) streaming?"}')]),
-        reply(calls=[("search_title", '{"title": "The Friend", "year": "2025"}')]),            # catalog
-        reply(text='{"matches": [{"title": "The Friend", "year": "2025", "ids": {"netflix": "82182295"}}]}'),
+        reply(calls=[("check_titles", titles)]),                                               # consensus
         reply(text="Both included. Confirmed: The Friend (2025), netflix 82182295."),           # consensus
         reply(text="You could watch The Friend (2025) on Netflix. Shall I play it?"),            # supervisor
     ]
@@ -209,11 +209,14 @@ def test_team_supervisor_consensus_catalog():
         answer, trace, fake = run_offline(script, "me and Mishika, something we both like",
                                           {**FAKE_SERVERS, "taste": TASTE_URL})
     steps = [(t["agent"], t["tool"]) for t in trace]
-    assert steps == [("consensus", "get_household_taste"), ("catalog", "search_title"),
-                     ("consensus", "ask_catalog_agent"), ("supervisor", "ask_consensus_agent")], steps
+    assert steps[0] == ("consensus", "get_household_taste")
+    assert sorted(steps[1:3]) == [("check_titles", "search_title")] * 2       # in parallel, by CODE
+    assert steps[3:] == [("consensus", "check_titles"), ("supervisor", "ask_consensus_agent")], steps
+    checked = json.loads(trace[3]["result"])
+    assert [m["title"] for m in checked["confirmed"]] == ["The Friend"] and checked["not_found"] == [f"Nope {RUN}"]
     m = person(json.loads(trace[0]["result"]), "mishika")
     assert m["included"] and f"m-like-{RUN}" in m["likes"]
-    assert [c["tools"] for c in fake.calls[1:3]] == [["ask_catalog_agent", "get_household_taste"]] * 2
+    assert len(fake.calls) == 5                     # was 7 with nested Catalog agents (2 calls per title)
     assert not any(t["tool"] == "play_title" for t in trace)   # options first; play only when the user picks
 
 

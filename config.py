@@ -139,3 +139,30 @@ TRACING = _list("TRACING", "")
 OTLP_ENDPOINT = os.environ.get("OTLP_ENDPOINT", "http://localhost:4318")
 # 1 = also put tool RESULTS in spans (they can hold personal data, e.g. watch history). Args are always kept.
 TRACE_CONTENT = _bool("TRACE_CONTENT", False)
+# Phase 3, Step 7: a SMALL, fast Groq model for the router, used only when its rules are unsure.
+# Empty = no model: unsure requests go straight to the full team (FALLBACK). See: python agent.py --models
+ROUTER_MODEL = os.environ.get("ROUTER_MODEL", "")
+# ---------------------------------------------------------------- Phase 4: resilience
+# Small SQLite files that must outlive one process: graph checkpoints, the TV's idempotency records,
+# the catalog cache and circuit breaker. In quick mode every request starts fresh stdio servers, so
+# memory alone would forget them. Git-ignored. Tests and evals point it somewhere else.
+STATE_DIR = Path(os.environ.get("STATE_DIR", str(BASE_DIR / ".state")))
+# Catalog cache: a fresh answer is reused for this long (availability changes slowly; saves RapidAPI quota).
+CATALOG_CACHE_TTL = _int("CATALOG_CACHE_TTL", 24 * 3600)
+# When the catalog API is DOWN, an older cached answer (up to this age) is better than none.
+CATALOG_STALE_MAX = _int("CATALOG_STALE_MAX", 7 * 24 * 3600)
+# Retries for ONE catalog search: attempts, and the first backoff in seconds (doubled each time, with jitter).
+CATALOG_RETRIES = _int("CATALOG_RETRIES", 3)
+CATALOG_BACKOFF = float(os.environ.get("CATALOG_BACKOFF", "0.5"))
+# Circuit breaker: after this many failed searches in a row, stop calling the API for CATALOG_BREAKER_RESET s.
+CATALOG_BREAKER_FAILURES = _int("CATALOG_BREAKER_FAILURES", 3)
+CATALOG_BREAKER_RESET = _int("CATALOG_BREAKER_RESET", 60)
+# Groq: the SDK itself retries rate limits / 5xx / dropped connections with backoff. Retry at ONE layer only.
+GROQ_MAX_RETRIES = _int("GROQ_MAX_RETRIES", 2)
+# Fast TV check: after Wake-on-LAN, how long to wait for the TV to answer on the network at all.
+# From standby it answers within seconds; from fully OFF it never will (WoL cannot wake it), so waiting
+# the full connect loop (~40-90 s) was wasted. Raise this if a TV in standby is reported unreachable.
+TV_WAKE_WINDOW = _int("TV_WAKE_WINDOW", 25)
+# Failure drills ONLY (never set this in .env for normal use): crash the process at a graph node.
+# "suggest" = crash as the node starts; "play:after" = crash after the node's work, before it is saved.
+CHAOS_CRASH = os.environ.get("CHAOS_CRASH", "")

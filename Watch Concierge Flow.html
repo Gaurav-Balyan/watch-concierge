@@ -1,0 +1,596 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Watch Concierge Flow</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Narrow:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a signal-flow schematic (left = you, right = the outside world), a phase rail above it,
+   and a two-column reading area below (request walkthrough | what the selected box is). */
+:root {
+  --bg: #f3f4f1; --panel: #ffffff; --ink: #1b2026; --muted: #5d6670; --line: #c9cfcc; --grid: #e4e7e3;
+  --accent: #b5600b;            /* signal amber: the highlighted path */
+  --k-entry: #2b3440; --k-agent: #8a3b6e; --k-code: #1f6f64; --k-skill: #6b5a12;
+  --k-server: #2f4f86; --k-ext: #5b6470; --k-sec: #a2591a; --k-obs: #3d7a3a; --k-plan: #7a7f86;
+  --tint-agent: #f6e9f1; --tint-code: #e5f2ef; --tint-skill: #f4efd9; --tint-server: #e6ecf7;
+  --tint-ext: #eceeef; --tint-sec: #f7ece1; --tint-obs: #e7f1e5; --tint-entry: #e7eaee; --tint-plan: #f2f2f2;
+  --font-display: "Archivo Narrow", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161a; --panel: #1a1f25; --ink: #e8ebee; --muted: #9aa4ad; --line: #39424b; --grid: #20262c;
+  --accent: #f0a23f;
+  --k-entry: #c9d2dc; --k-agent: #e59ac8; --k-code: #6fd1c0; --k-skill: #e3cc6a;
+  --k-server: #8fb0ea; --k-ext: #aab3bc; --k-sec: #f0a868; --k-obs: #8fd38b; --k-plan: #9aa0a7;
+  --tint-agent: #33212d; --tint-code: #17302c; --tint-skill: #302a14; --tint-server: #1b2638;
+  --tint-ext: #242a30; --tint-sec: #33261a; --tint-obs: #1c2e1b; --tint-entry: #222a33; --tint-plan: #23272b;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12161a; --panel: #1a1f25; --ink: #e8ebee; --muted: #9aa4ad; --line: #39424b; --grid: #20262c;
+  --accent: #f0a23f;
+  --k-entry: #c9d2dc; --k-agent: #e59ac8; --k-code: #6fd1c0; --k-skill: #e3cc6a;
+  --k-server: #8fb0ea; --k-ext: #aab3bc; --k-sec: #f0a868; --k-obs: #8fd38b; --k-plan: #9aa0a7;
+  --tint-agent: #33212d; --tint-code: #17302c; --tint-skill: #302a14; --tint-server: #1b2638;
+  --tint-ext: #242a30; --tint-sec: #33261a; --tint-obs: #1c2e1b; --tint-entry: #222a33; --tint-plan: #23272b;
+  color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1280px; margin: 0 auto; padding-block: 28px 56px; display: grid; gap: 22px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 4vw, 40px); line-height: 1.05; margin: 0; text-wrap: balance; }
+.lede { margin: 0; max-width: 70ch; color: var(--muted); }
+h2 { font-family: var(--font-display); font-size: 20px; margin: 0; letter-spacing: .01em; }
+h3 { font-family: var(--font-display); font-size: 17px; margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: .88em; }
+
+/* phase rail */
+.rail { display: flex; flex-wrap: wrap; gap: 6px; }
+.rail button { font: 500 13px/1.2 var(--font-body); color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 999px; padding: 7px 12px; cursor: pointer; }
+.rail button .k { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-right: 6px; }
+.rail button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.rail button.planned { border-style: dashed; }
+.rail button:focus-visible, .scen button:focus-visible, .stepnav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.phasebox { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; }
+.phasebox .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.phasebox h4 { font: 600 12px/1.2 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+.phasebox ul { margin: 0; padding-left: 18px; }
+.phasebox li { margin: 2px 0; }
+
+/* diagram */
+.diagram { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 980px; height: auto; }
+.lanehdr { font: 600 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; fill: var(--muted); }
+.lanebg { fill: var(--grid); }
+.node { cursor: pointer; }
+.node rect.box { stroke-width: 1.4; }
+.node .t { font: 600 14px var(--font-display); fill: var(--ink); }
+.node .s { font: 400 10.5px var(--font-mono); fill: var(--muted); }
+.node .tag { font: 600 9.5px var(--font-mono); letter-spacing: .06em; }
+.node:focus-visible rect.box { outline: none; stroke: var(--accent); stroke-width: 3; }
+.node.dim { opacity: .22; }
+.node.hot rect.box { stroke: var(--accent); stroke-width: 3; }
+.node.sel rect.box { stroke-dasharray: none; filter: drop-shadow(0 0 0 var(--accent)); }
+.node.abstracted rect.box { stroke-dasharray: 5 4; }
+.edge path { fill: none; stroke: var(--line); stroke-width: 1.3; }
+.edge.model path { stroke-dasharray: 5 4; }
+.edge.token path, .edge.trace path { stroke-dasharray: 2 4; }
+.edge.dim { opacity: .15; }
+.edge.hot path { stroke: var(--accent); stroke-width: 2.6; opacity: 1; }
+.edge text { font: 500 10px var(--font-mono); fill: var(--muted); }
+.edge.hot text { fill: var(--accent); font-weight: 600; }
+.edge .lblbg { fill: var(--panel); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.4px solid; display: inline-block; }
+.ln { width: 26px; height: 0; border-top: 2px solid var(--muted); display: inline-block; }
+
+/* lower area */
+.lower { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 860px) { .lower { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.scen { display: flex; flex-wrap: wrap; gap: 6px; }
+.scen button { font: 500 13px/1.25 var(--font-mono); text-align: left; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+.scen button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.stepnav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stepnav button { font: 600 13px var(--font-body); background: var(--ink); color: var(--panel); border: 0; border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+.stepnav button:disabled { opacity: .35; cursor: default; }
+.stepnav .count { font: 500 12px var(--font-mono); color: var(--muted); }
+.steplist { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; counter-reset: s; }
+.steplist li { display: grid; grid-template-columns: 26px 1fr; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+.steplist li::before { counter-increment: s; content: counter(s); font: 600 12px var(--font-mono); color: var(--muted); padding-top: 2px; }
+.steplist li.on { border-color: var(--accent); background: var(--bg); }
+.steplist li.on::before { color: var(--accent); }
+.steplist .st { font-weight: 600; }
+.steplist .sd { color: var(--muted); font-size: 14px; }
+.steplist .term { font: 500 11px var(--font-mono); color: var(--accent); }
+.cost { font: 500 12.5px var(--font-mono); color: var(--muted); }
+.cost b { color: var(--ink); }
+dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; }
+dt { font: 600 11px/1.9 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.kindpill { font: 600 11px var(--font-mono); letter-spacing: .05em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid; justify-self: start; }
+.gloss { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 22px; }
+.gloss div { min-width: 0; }
+.gloss b { font-family: var(--font-display); font-size: 15px; }
+.gloss p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.hint { font-size: 13px; color: var(--muted); margin: 0; }
+@media (prefers-reduced-motion: no-preference) { .node, .edge { transition: opacity .2s ease; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Household Watch Concierge · architecture</div>
+    <h1>How a request flows, phase by phase</h1>
+    <p class="lede">Pick a phase to see what existed then and what it changed. Pick a request to walk its path one step at a time. Click any box for what it is, where it lives and how it is configured.</p>
+  </header>
+
+  <section aria-label="Phase">
+    <div class="rail" id="rail"></div>
+  </section>
+
+  <section class="phasebox" id="phasebox" aria-live="polite"></section>
+
+  <section class="diagram" aria-label="Flow diagram">
+    <svg id="svg" viewBox="0 0 1240 760" role="img" aria-label="Diagram of agents, workflows, tools, MCP servers and external services"></svg>
+    <div class="legend">
+      <span><i class="sw" style="border-color:var(--k-agent);background:var(--tint-agent)"></i>agent (calls a model)</span>
+      <span><i class="sw" style="border-color:var(--k-code);background:var(--tint-code)"></i>code (no model)</span>
+      <span><i class="sw" style="border-color:var(--k-skill);background:var(--tint-skill)"></i>skill file</span>
+      <span><i class="sw" style="border-color:var(--k-server);background:var(--tint-server)"></i>MCP server</span>
+      <span><i class="sw" style="border-color:var(--k-sec);background:var(--tint-sec)"></i>identity</span>
+      <span><i class="sw" style="border-color:var(--k-obs);background:var(--tint-obs)"></i>observability</span>
+      <span><i class="sw" style="border-color:var(--k-ext);background:var(--tint-ext)"></i>outside service</span>
+      <span><i class="ln"></i>call</span>
+      <span><i class="ln" style="border-top-style:dashed"></i>model call</span>
+      <span><i class="ln" style="border-top-style:dotted"></i>token / trace</span>
+      <span><i class="sw" style="border-color:var(--muted);border-style:dashed"></i>moved off the main path in this phase</span>
+    </div>
+  </section>
+
+  <section class="lower">
+    <div class="card">
+      <h2>Walk a request</h2>
+      <div class="scen" id="scen"></div>
+      <div class="stepnav">
+        <button type="button" id="prev">Back</button>
+        <button type="button" id="next">Next step</button>
+        <span class="count" id="count"></span>
+      </div>
+      <div class="cost" id="cost"></div>
+      <ol class="steplist" id="steps"></ol>
+    </div>
+    <div class="card" id="detail" aria-live="polite"></div>
+  </section>
+
+  <section class="card">
+    <h2>Words used in the diagram</h2>
+    <div class="gloss" id="gloss"></div>
+  </section>
+</div>
+
+<script>
+const PHASES = [
+  {k:"p1",  short:"P1",  label:"Walking skeleton"},
+  {k:"p2",  short:"P2",  label:"Identity & data"},
+  {k:"p3a", short:"P3·1-3", label:"Team"},
+  {k:"p3b", short:"P3·4", label:"Tracing"},
+  {k:"p3c", short:"P3·5", label:"Consensus + YouTube"},
+  {k:"p3d", short:"P3·6", label:"Team evals"},
+  {k:"p3e", short:"P3·7", label:"Routing + skills"},
+  {k:"p4",  short:"P4",  label:"LangGraph + resilience (now)"},
+];
+const PI = Object.fromEntries(PHASES.map((p,i)=>[p.k,i]));
+
+const PHASE_NOTES = {
+  p1: {added:["agent.py: one hand-written loop (model proposes, code runs tools)","McpToolbox: starts catalog-mcp and device-mcp, discovers their tools","Groq model, streaming catalogue API, the LG TV","Evals with a fake catalog and a fake TV"],
+       changed:["Servers run as child processes over stdio: whoever runs the program is trusted"],
+       hidden:["Tool code left the agent: the agent only knows tool names, descriptions and schemas"]},
+  p2: {added:["Keycloak login (PKCE) and login.py","One narrow token per server (audience): a catalog token cannot open the TV","taste-mcp on Postgres with row-level security","Recorder: record_watch after a real play, called by code"],
+       changed:["Servers moved to HTTP and check every token"],
+       hidden:["Who is asking moved from the process into the token: no tool takes a user argument"]},
+  p3a:{added:["Agent class: the same loop, many agents (name + prompt + servers)","multi_agent.py: a Supervisor with device tools","Catalog and Taste agents, each with only its own server and token","Bridges (LocalTool): ask_catalog_agent, ask_taste_agent"],
+       changed:["The loop moved out of run_agent() into Agent; the single agent still works"],
+       hidden:["To the Supervisor's model, a whole agent looks like one tool"]},
+  p3b:{added:["tracing.py: spans for agents, model calls, tool calls, connections","Jaeger to view traces","Trace context crosses into the MCP servers (traceparent in each request)"],
+       changed:["Nothing in the flow: tracing only observes"],
+       hidden:["Nested agents need no span code: the open span travels with the async call"]},
+  p3c:{added:["Consensus agent with the taste-household-read permission (only it asks)","household_members (consent, off by default) and household_reads (audit)","search_youtube and YouTube playback"],
+       changed:["Supervisor learned the routes for suggestions and songs"],
+       hidden:["Whose taste is read: a model may name people, but the server decides from token + consent"]},
+  p3d:{added:["Evals run the team too (--agent team)","Checks that read the trace: groundedness, claims need calls","Model calls counted per run"],
+       changed:["Case 10 follows the decided policy (both services: ask)"],
+       hidden:["Nothing new in the flow: this phase measures it"]},
+  p3e:{added:["routed.py + router.py: rules first, a small model only when unsure, else the team","workflows.py: PLAY, SONG, STATUS as code (0 model calls)","skills/*.md + skills.py: Taste and Consensus defined as files","check_titles: a code tool that checks titles in parallel"],
+       changed:["Consensus checks titles with check_titles instead of nested Catalog agents","Prompt policies became code in the workflows"],
+       hidden:["The Supervisor and Catalog agent now run only on the FALLBACK path"]},
+  p4: {added:["graph.py: the routes as a LangGraph graph (route node, a node per route, conditional edges)","Checkpoints in SQLite after every node: --pending, --resume <id>","Idempotency key per request (hidden from the model): a retry or resume never launches twice","resilience.py: retries with backoff + jitter, a circuit breaker and a cache for the catalog API","A fast TV check (fully off: ~25 s, not 40-90 s) and token renewal (before expiry, once after a 401)","Failure drills: evals/drills.py breaks one thing at a time"],
+       changed:["routed.py's dispatch became the graph's edges; routed.py stays for comparison","Workflow nodes are retried when a server dies; agent nodes are not (a repeat = every model call again)","Fixed TV waits are now spans that measure when the app came to the front"],
+       hidden:["A node runs AT LEAST ONCE (a crash after its work re-runs it): idempotency makes that safe","State that must outlive a process lives in .state/ (quick mode starts new servers per request)"]},
+};
+
+// x columns: 20 you | 200 entry/router | 410 agents & paths | 640 tools & identity | 850 MCP servers | 1050 outside
+const N = [
+  {id:"user", x:20,y:330,w:150,h:60, t:"You", s:"a request", kind:"entry", since:"p1",
+   what:"Where every request starts. Since Phase 4 the day-to-day entry is graph.py (durable). The others stay runnable for comparison: agent.py (one agent), multi_agent.py (the team), routed.py (router first, hand-written).", file:"(PowerShell)", config:".env: GROQ_API_KEY, *_MCP_URL, TRACING", talks:"graph.py, routed.py, multi_agent.py, agent.py"},
+  {id:"evals", x:20,y:560,w:150,h:70, t:"Evals", s:"run_evals.py · drills.py\nsingle·team·routed·graph", kind:"obs", since:"p1",
+   what:"Runs fixed cases several times against fake servers and scores the TRACE (what was really called) and the answer. Counts model calls since Step 6.", file:"evals/run_evals.py, evals/cases.py", config:"--agent, --reps, --compare", talks:"the same entry functions, with fake catalog and TV"},
+  {id:"tests", x:20,y:660,w:150,h:60, t:"Tests", s:"tests/ · pytest", kind:"obs", since:"p1",
+   what:"Unit and integration tests, each mutation-checked: break the code on purpose and a test must fail.", file:"tests/*.py", config:"Keycloak + Postgres for the HTTP tests", talks:"its own copies of the servers (test database, DRY RUN)"},
+
+  {id:"agentpy", x:200,y:40,w:175,h:64, t:"agent.py", s:"single concierge", kind:"entry", since:"p1",
+   abstracted:{p3e:"Still runs unchanged: it is the eval baseline."},
+   what:"The single agent: one loop that holds every tool and every token. Since Phase 3 it is built from the reusable Agent class.", file:"agent.py (run_agent, concierge())", config:"SYSTEM prompt, MAX_TURNS=6, SERVERS", talks:"Agent loop"},
+  {id:"teampy", x:200,y:170,w:175,h:64, t:"multi_agent.py", s:"the team (run_team)", kind:"entry", since:"p3a",
+   abstracted:{p3e:"Also the router's FALLBACK path now."},
+   what:"Builds the Supervisor and the specialists, and the bridges between them.", file:"multi_agent.py", config:"SUPERVISOR_SYSTEM (+ YouTube, taste, consensus lines)", talks:"Supervisor agent"},
+  {id:"routedpy", x:200,y:300,w:175,h:64, t:"routed.py", s:"router first (run_routed)", kind:"entry", since:"p3e",
+   abstracted:{p4:"Kept for comparison: graph.py runs the same routes, durably."},
+   what:"The routed concierge: asks the Router which path to take, then runs a workflow, a skill agent or the team. Writes a (route) entry in the trace and a 'route KIND' span.", file:"routed.py", config:"same .env as the team", talks:"Router"},
+  {id:"router", x:200,y:400,w:175,h:96, t:"Router", s:"router.py\nrules → ROUTER_MODEL\n→ FALLBACK", kind:"code", since:"p3e",
+   what:"Decides the path before any expensive work. Rules first (free, instant) and only for requests they are sure of. If unsure: one call to a small model, if ROUTER_MODEL is set. Otherwise: FALLBACK to the team. It never guesses.", file:"router.py (by_rules, by_model, route)", config:"ROUTER_MODEL in .env (optional, e.g. llama-3.1-8b-instant)", talks:"Workflows, Skill files, Supervisor (fallback), Groq (only if unsure)"},
+  {id:"graph", x:200,y:560,w:175,h:84, t:"graph.py", s:"LangGraph · durable\nroute node + a node\nper route + edges", kind:"code", since:"p4",
+   what:"The day-to-day entry since Phase 4. The router is the 'route' node; conditional edges send the request to play / song / status (code workflows), taste / suggest (skill agents, in that order for 'I like X, suggest...') or fallback (the team). A workflow saying 'not mine' goes on to the team. State is plain data (request, route, answer), saved after every node. Each node is a span 'node <name>'. The thread id is also the REQUEST ID, which becomes the play's idempotency key.", file:"graph.py (build, run_graph, run_durable, pending)", config:"--pending · --resume <id> · --draw · CHAOS_CRASH (drills only)", talks:"Router, Workflows, Skill agents, Supervisor (fallback), Checkpoints"},
+
+  {id:"loop", x:410,y:40,w:200,h:64, t:"Agent loop", s:"Agent.loop · max_turns\nblocks repeats", kind:"agent", since:"p1",
+   what:"The heart of every agent: send the conversation and the offered tools to the model; if it asks for a tool, code checks and runs it, adds the result, and asks again. Blocks a repeated failed call and a repeated action. Recovers when Groq rejects a tool call.", file:"agent.py (class Agent)", config:"name, system prompt, servers, max_turns, after_tool, local_tools, scopes, offer/hide", talks:"Groq, McpToolbox, Recorder (after_tool)"},
+  {id:"supervisor", x:410,y:150,w:200,h:64, t:"Supervisor agent", s:"device tools + bridges", kind:"agent", since:"p3a",
+   abstracted:{p3e:"Runs only on the FALLBACK path now."},
+   what:"Routes inside the team: it cannot search or read taste itself. It asks specialists through bridges and plays titles with the id they confirm. Told the logged-in username by code (context, not authority).", file:"multi_agent.py (supervisor())", config:"servers: device only · local tools: ask_catalog_agent, ask_taste_agent, ask_consensus_agent", talks:"Groq, Bridges, McpToolbox (device), Recorder"},
+  {id:"catalogA", x:410,y:250,w:200,h:56, t:"Catalog agent", s:"search_title · search_youtube", kind:"agent", since:"p3a",
+   abstracted:{p3e:"Fallback only: workflows and check_titles reach the catalog by code."},
+   what:"A specialist that only finds where a title streams, or finds a song on YouTube. Holds only a catalog-mcp token: its token is refused at device-mcp.", file:"multi_agent.py (catalog_agent())", config:"CATALOG_SYSTEM · servers: catalog · max_turns 4", talks:"Groq, McpToolbox (catalog)"},
+  {id:"tasteA", x:410,y:330,w:200,h:56, t:"Taste agent", s:"built from skills/taste.md", kind:"agent", since:"p3a",
+   what:"Saves, forgets and reads the logged-in person's likes and dislikes (one call per item). Never shown get_household_taste.", file:"skills/taste.md → skills.build_agent", config:"servers: taste · hide: get_household_taste · max_turns 5", talks:"Groq, McpToolbox (taste)"},
+  {id:"consensusA", x:410,y:410,w:200,h:56, t:"Consensus agent", s:"built from skills/suggest.md", kind:"agent", since:"p3c",
+   what:"Suggests titles for one person or several: reads the tastes of those who agreed to share, proposes titles, and has CODE confirm them (check_titles). The only agent with the household permission.", file:"skills/suggest.md → skills.build_agent", config:"servers: taste · offer: get_household_taste · scopes: taste-household-read · local: check_titles · max_turns 5", talks:"Groq, McpToolbox (taste + permission), check_titles"},
+  {id:"skills", x:410,y:490,w:200,h:56, t:"Skill files", s:"skills/*.md · skills.py", kind:"skill", since:"p3e",
+   what:"A route that needs a model, described as a file: a JSON header (servers, offer/hide, scopes, local_tools, max_turns) and the instructions. The Router picks the skill, so loading one costs no model call.", file:"skills/taste.md, skills/suggest.md, skills.py", config:"edit the .md file; the eval fingerprint records which file changed", talks:"builds the Taste and Consensus agents"},
+  {id:"workflows", x:410,y:570,w:200,h:80, t:"Workflows", s:"workflows.py\nPLAY · SONG · STATUS\n0 model calls", kind:"code", since:"p3e",
+   what:"Fixed steps in code for requests that need no judgement. The policies are if-statements: a year only if typed; both services → ask; a named service is used; several → ask; a system error is not 'not found'. The answer is a template, so it cannot overclaim.", file:"workflows.py", config:"no prompt: change the code, a unit test proves it", talks:"McpToolbox (catalog + device only), Recorder"},
+  {id:"checkpoint", x:410,y:680,w:200,h:56, t:"Checkpoints", s:"after every node · resume", kind:"code", since:"p4",
+   what:"LangGraph's checkpointer saves the state after every node (durability 'sync': on disk before the next node starts). After a crash, --resume loads the last saved state and runs the interrupted node again. So a node runs AT LEAST ONCE, which is why play needs an idempotency key.", file:"graph.py (saver: AsyncSqliteSaver)", config:".state/checkpoints.sqlite", talks:".state"},
+
+  {id:"toolbox", x:640,y:60,w:180,h:80, t:"McpToolbox", s:"connect · list_tools\noffer / hide\nroutes each call", kind:"code", since:"p1",
+   what:"One per agent or workflow run. For each server: fetch a narrow token, connect, list its tools. Shows the model only the offered tools; a tool not shown cannot run. Forwards each call to the server that owns it.", file:"agent.py (McpToolbox, call_traced)", config:"servers, scopes (extra permissions), offer / hide", talks:"login.py, catalog-mcp, device-mcp, taste-mcp"},
+  {id:"bridges", x:640,y:170,w:180,h:64, t:"Bridges (LocalTool)", s:"ask_catalog / ask_taste\n/ ask_consensus", kind:"code", since:"p3a",
+   what:"'Agent as a tool': a tool whose function runs a whole other agent. Only the question goes down and only the answer comes back; the two models never see each other's conversation.", file:"multi_agent.py (ask_agent_tool)", config:"name, description, owner, read_only", talks:"Catalog, Taste and Consensus agents"},
+  {id:"checkT", x:640,y:260,w:180,h:56, t:"check_titles", s:"code · parallel search", kind:"code", since:"p3e",
+   what:"Checks up to 4 proposed titles at once with search_title and returns only the confirmed ones, with ids. Replaces up to 3 nested Catalog-agent runs (2 model calls each).", file:"multi_agent.py (check_titles_tool)", config:"MAX_TITLES_CHECKED = 4 · its own catalog-mcp token", talks:"McpToolbox (catalog)"},
+  {id:"recorder", x:640,y:340,w:180,h:56, t:"Recorder", s:"after a real play", kind:"code", since:"p2",
+   what:"Bookkeeping that must always happen, so it is code, never a model: after a real play (not a dry run) it opens a short taste-mcp connection and writes history. Long titles shortened; a failure marks its span as an error.", file:"agent.py (record_watch_if_played, history_title), multi_agent.py (record_watch_after_play)", config:"after_tool hook", talks:"McpToolbox (taste)"},
+  {id:"login", x:640,y:420,w:180,h:64, t:"login.py", s:"one login → a narrow\ntoken per server", kind:"sec", since:"p2",
+   what:"Signs you in once in the browser (PKCE) and keeps only a refresh token. Every connection then gets a token narrowed to ONE server (its audience), plus extra scopes only when asked (taste-household-read). Phase 4: RefreshingAuth renews a token shortly before it expires, and once after a 401.", file:"login.py (access_token_for, RefreshingAuth)", config:"LOGIN_SCOPE, .login.json", talks:"Keycloak"},
+  {id:"resil", x:640,y:620,w:180,h:84, t:"resilience.py", s:"retry + backoff · breaker\ncache · idempotency\n(state in SQLite)", kind:"code", since:"p4",
+   what:"The Phase 4 patterns. Retry only TRANSIENT errors, waiting longer each time with jitter. Circuit breaker: after 3 failed searches in a row, stop calling the API for 60 s and fail fast. Cache: reuse answers for 24 h, and an older one when the API is down. Idempotency: record the intent before acting and the result after, so a repeat gets the first result back.", file:"resilience.py · used by lookup.py (catalog) and device_mcp.py", config:"CATALOG_RETRIES, CATALOG_BACKOFF, CATALOG_BREAKER_*, CATALOG_CACHE_TTL, CATALOG_STALE_MAX", talks:".state"},
+  {id:"tracing", x:640,y:520,w:180,h:64, t:"tracing.py", s:"OpenTelemetry spans", kind:"obs", since:"p3b",
+   what:"Every agent run, model call, tool call, connection and route is a span; spans nest into one trace per request, across processes. Never records tokens; tool results only with TRACE_CONTENT=1.", file:"tracing.py", config:"TRACING=print,jaeger · OTLP_ENDPOINT · TRACE_CONTENT", talks:"Jaeger (and the printed tree)"},
+
+  {id:"catalogS", x:850,y:60,w:170,h:70, t:"catalog-mcp", s:"search_title\nsearch_youtube", kind:"server", since:"p1",
+   what:"An MCP server with no model: plain code that looks titles up (streaming API, India) and searches YouTube. Read-only tools. Phase 4: the API call goes through cache → circuit breaker → retries; an open breaker answers CATALOG_UNAVAILABLE ('not a missing title').", file:"catalog_mcp.py, lookup.py · port 8001", config:"RAPIDAPI_KEY · audience catalog-mcp", talks:"Streaming API, YouTube"},
+  {id:"deviceS", x:850,y:170,w:170,h:70, t:"device-mcp", s:"tv_status · play_title", kind:"server", since:"p1",
+   what:"Controls the TV. Picks the TV profile from the TOKEN's user (the model cannot choose it). Dry run by default; one action at a time; honest results ('requested', never 'playing'). Phase 4: play_title takes an idempotency key (filled in by McpToolbox, hidden from the model): a repeat of the same request gets the first result back and launches nothing.", file:"device_mcp.py · port 8002", config:"DEVICE_DRY_RUN, TV_IP, NETFLIX_PROFILES, PRIME_PROFILES", talks:"LG TV"},
+  {id:"tasteS", x:850,y:300,w:170,h:84, t:"taste-mcp", s:"taste tools ·\nget_household_taste ·\nset_household_sharing", kind:"server", since:"p2",
+   what:"Each person's likes, dislikes and history. The person comes only from the token. Household read needs the permission, membership and that person's own consent; every lookup is audited.", file:"taste_mcp.py · port 8003", config:"TASTE_DB_URL (role taste_app, not superuser)", talks:"Postgres, Keycloak (verifies tokens)"},
+
+  {id:"groq", x:1050,y:20,w:170,h:52, t:"Groq", s:"gpt-oss-120b\nROUTER_MODEL (small)", kind:"ext", since:"p1",
+   what:"The language model. Every 'model call' in this diagram is one request here: the conversation and the offered tools go in, a tool request or an answer comes back.", file:"(cloud API)", config:"GROQ_API_KEY, GROQ_MODEL, ROUTER_MODEL", talks:"-"},
+  {id:"rapid", x:1050,y:90,w:170,h:48, t:"Streaming API", s:"RapidAPI · India", kind:"ext", since:"p1",
+   what:"Where a title streams in India (Netflix, Prime) and its content id.", file:"lookup.py", config:"RAPIDAPI_KEY", talks:"-"},
+  {id:"yt", x:1050,y:150,w:170,h:48, t:"YouTube", s:"yt-dlp search", kind:"ext", since:"p3c",
+   what:"Searched by name with yt-dlp (top 3 results). If it breaks after a YouTube change: pip install -U yt-dlp.", file:"services/youtube.py", config:"-", talks:"-"},
+  {id:"tv", x:1050,y:210,w:170,h:56, t:"LG TV", s:"webOS · wake-on-LAN", kind:"ext", since:"p1",
+   what:"Woken, then a deep link opens the title; key presses pick the profile. Most of a play's time (often 15-60 s) is spent here. Phase 4: what the TV can report (network, power, front app) is checked instead of slept; a fully OFF TV fails after TV_WAKE_WINDOW; the waits it cannot report stay fixed but are measured in spans.", file:"tv.py, services/*.py", config:"TV_IP, TV_MAC, TV_WAKE_WINDOW, waits in config.py", talks:"-"},
+  {id:"pg", x:1050,y:300,w:170,h:64, t:"Postgres", s:"row-level security\nconsent · audit", kind:"ext", since:"p2",
+   what:"taste_items and watch_history (one person per transaction, enforced by the database), household_members (consent) and household_reads (append-only audit).", file:"db/schema.psql, db/household.psql", config:"Docker container household-db · port 5433", talks:"-"},
+  {id:"kc", x:1050,y:400,w:170,h:64, t:"Keycloak", s:"PKCE login · scopes\npublic keys (JWKS)", kind:"sec", since:"p2",
+   what:"Issues tokens. One client scope per server puts that audience in the token; taste-household-read is an extra permission. Servers verify tokens with its public keys.", file:"keycloak/household-realm.json", config:"Docker container keycloak · port 8080", talks:"-"},
+  {id:"state", x:1050,y:620,w:170,h:70, t:".state/", s:"SQLite files\ncheckpoints · actions\ncache · breaker", kind:"ext", since:"p4",
+   what:"Small files that must outlive one process: graph checkpoints, the TV's idempotency records, the catalog cache and breaker. Memory would forget them: quick mode starts new server processes per request, and a crash wipes memory. Git-ignored; safe to delete (you lose unfinished requests and the cache).", file:".state/*.sqlite", config:"STATE_DIR (tests and evals use their own)", talks:"-"},
+  {id:"jaeger", x:1050,y:520,w:170,h:56, t:"Jaeger", s:"trace viewer :16686", kind:"obs", since:"p3b",
+   what:"Receives spans from the agents AND the servers over OTLP and shows each request as one timeline.", file:"(Docker container jaeger)", config:"OTLP on port 4318", talks:"-"},
+];
+const NODE = Object.fromEntries(N.map(n=>[n.id,n]));
+
+const E = [
+  ["e_user_agent","user","agentpy","call","p1",""],
+  ["e_user_team","user","teampy","call","p3a",""],
+  ["e_user_routed","user","routedpy","call","p3e",""],
+  ["e_evals","evals","routedpy","call","p1","--agent"],
+  ["e_agent_loop","agentpy","loop","call","p1",""],
+  ["e_loop_groq","loop","groq","model","p1","model call"],
+  ["e_loop_tb","loop","toolbox","call","p1","tool calls"],
+  ["e_loop_rec","loop","recorder","call","p2","after_tool"],
+  ["e_team_sup","teampy","supervisor","call","p3a",""],
+  ["e_routed_router","routedpy","router","call","p3e",""],
+  ["e_router_wf","router","workflows","call","p3e","PLAY · SONG · STATUS"],
+  ["e_router_skills","router","skills","call","p3e","TASTE · SUGGEST"],
+  ["e_router_sup","router","supervisor","call","p3e","FALLBACK"],
+  ["e_router_groq","router","groq","model","p3e","only if unsure"],
+  ["e_sup_groq","supervisor","groq","model","p3a",""],
+  ["e_sup_bridges","supervisor","bridges","call","p3a","ask_*_agent"],
+  ["e_sup_tb","supervisor","toolbox","call","p3a","device"],
+  ["e_sup_rec","supervisor","recorder","call","p3a","after_tool"],
+  ["e_br_cat","bridges","catalogA","call","p3a",""],
+  ["e_br_taste","bridges","tasteA","call","p3a",""],
+  ["e_br_cons","bridges","consensusA","call","p3c",""],
+  ["e_skills_taste","skills","tasteA","call","p3e","builds"],
+  ["e_skills_cons","skills","consensusA","call","p3e","builds"],
+  ["e_cat_groq","catalogA","groq","model","p3a",""],
+  ["e_taste_groq","tasteA","groq","model","p3a",""],
+  ["e_cons_groq","consensusA","groq","model","p3c",""],
+  ["e_cat_tb","catalogA","toolbox","call","p3a",""],
+  ["e_taste_tb","tasteA","toolbox","call","p3a",""],
+  ["e_cons_tb","consensusA","toolbox","call","p3c","+household-read"],
+  ["e_cons_ct","consensusA","checkT","call","p3e","check_titles"],
+  ["e_ct_tb","checkT","toolbox","call","p3e","parallel"],
+  ["e_wf_tb","workflows","toolbox","call","p3e","call_traced"],
+  ["e_wf_rec","workflows","recorder","call","p3e",""],
+  ["e_rec_tb","recorder","toolbox","call","p2",""],
+  ["e_tb_login","toolbox","login","token","p2","token per server"],
+  ["e_login_kc","login","kc","token","p2",""],
+  ["e_tb_cat","toolbox","catalogS","call","p1","MCP"],
+  ["e_tb_dev","toolbox","deviceS","call","p1","MCP"],
+  ["e_tb_taste","toolbox","tasteS","call","p2","MCP"],
+  ["e_cat_rapid","catalogS","rapid","call","p1",""],
+  ["e_cat_yt","catalogS","yt","call","p3c",""],
+  ["e_dev_tv","deviceS","tv","call","p1",""],
+  ["e_taste_pg","tasteS","pg","call","p2",""],
+  ["e_srv_kc","tasteS","kc","token","p2","verify"],
+  ["e_tr_jaeger","tracing","jaeger","trace","p3b","OTLP"],
+  ["e_user_graph","user","graph","call","p4","day to day"],
+  ["e_graph_router","graph","router","call","p4","route node"],
+  ["e_graph_wf","graph","workflows","call","p4","play·song·status"],
+  ["e_graph_skills","graph","skills","call","p4","taste → suggest"],
+  ["e_graph_sup","graph","supervisor","call","p4","fallback node"],
+  ["e_graph_cp","graph","checkpoint","call","p4","after every node"],
+  ["e_cp_state","checkpoint","state","call","p4",""],
+  ["e_cat_resil","catalogS","resil","call","p4","cache·breaker·retry"],
+  ["e_dev_resil","deviceS","resil","call","p4","idempotency"],
+  ["e_resil_state","resil","state","call","p4",""],
+].map(([id,f,t,kind,since,label])=>({id,f,t,kind,since,label}));
+
+const SCEN = [
+  {id:"graphplay", label:"play The Friend 2025  (graph.py)", phase:"p4", cost:"<b>0</b> model calls · durable · same answer as routed.py", steps:[
+    {n:["user","graph"], e:["e_user_graph"], t:"You run graph.py", d:"It prints a request id first. That id is the graph's THREAD id (its checkpoints) and the REQUEST id (the play's idempotency key).", term:"thread id"},
+    {n:["graph","router"], e:["e_graph_router"], t:"Node 'route'", d:"The same router as routed.py. Its result goes into the state as plain data (kind, params).", term:"node · state"},
+    {n:["graph","checkpoint","state"], e:["e_graph_cp","e_cp_state"], t:"Checkpoint", d:"The state is saved before the next node starts (durability 'sync').", term:"checkpoint"},
+    {n:["workflows"], e:["e_graph_wf"], t:"Conditional edge → node 'play'", d:"after_route() names the next node from the state. The PLAY workflow runs as before; 'not mine' would send it on to the team.", term:"conditional edge"},
+    {n:["toolbox","login","kc"], e:["e_wf_tb","e_tb_login","e_login_kc"], t:"Narrow tokens that renew themselves", d:"Same two audiences as before; RefreshingAuth renews a token before it expires and once after a 401.", term:"token refresh"},
+    {n:["catalogS","resil","rapid"], e:["e_tb_cat","e_cat_resil","e_cat_rapid"], t:"search_title: cache → breaker → retry → API", d:"A cached answer costs nothing. A failing API is retried with backoff only for transient errors; after 3 failed searches the breaker opens and later ones fail fast.", term:"circuit breaker"},
+    {n:["deviceS","resil","tv"], e:["e_tb_dev","e_dev_resil","e_dev_tv"], t:"play_title with an idempotency key", d:"McpToolbox adds the key (the model never sees it). device-mcp records 'started' BEFORE touching the TV and the result AFTER.", term:"idempotency"},
+    {n:["graph","checkpoint","state","tracing","jaeger"], e:["e_graph_cp","e_cp_state","e_tr_jaeger"], t:"Checkpoint, answer, trace", d:"The finished state is saved. The trace shows graph → node route → node play, with the TV waits measured as spans.", term:"span per node"},
+  ]},
+  {id:"crash", label:"crash after play, then --resume", phase:"p4", cost:"1 TV launch, not 2 · <b>0</b> model calls", steps:[
+    {n:["user","graph"], e:["e_user_graph"], t:"A request starts", d:"python graph.py \"play The Friend 2025\" → request id 20261023-171200-ab12cd.", term:""},
+    {n:["graph","router","checkpoint","state"], e:["e_graph_router","e_graph_cp","e_cp_state"], t:"'route' runs and is saved", d:"The last checkpoint now says: next node = play.", term:"checkpoint"},
+    {n:["workflows","deviceS","resil","tv"], e:["e_graph_wf","e_tb_dev","e_dev_resil","e_dev_tv"], t:"'play' sends the commands", d:"device-mcp claims the key ('started'), opens the title, stores the result ('done').", term:"intent before action"},
+    {n:["graph"], e:[], t:"The process dies", d:"Killed after the TV command, BEFORE play's checkpoint (the drill: CHAOS_CRASH=play:after = os._exit). The work happened; the graph does not know.", term:"at least once"},
+    {n:["user","graph","checkpoint","state"], e:["e_user_graph","e_graph_cp","e_cp_state"], t:"python graph.py --resume <id>", d:"Loads the last checkpoint: request + route are there, next = play. 'route' does not run again.", term:"resume"},
+    {n:["workflows","deviceS","resil"], e:["e_graph_wf","e_tb_dev","e_dev_resil"], t:"'play' runs AGAIN: same key", d:"Same request id → same idempotency key. device-mcp finds 'done' and returns the first result with duplicate: true. Nothing is sent to the TV; the recorder skips it.", term:"idempotency"},
+    {n:["graph","checkpoint","state"], e:["e_graph_cp","e_cp_state"], t:"Finished honestly", d:"\"I sent the commands... the request was interrupted and resumed; they were not sent a second time.\"", term:""},
+  ]},
+  {id:"play", label:"play The Friend 2025", phase:"p3e", cost:"<b>0</b> model calls · route PLAY · ~3 s + the TV", steps:[
+    {n:["user","routedpy"], e:["e_user_routed"], t:"You run routed.py", d:"The entry point opens the trace (with TRACING set) and asks the Router for a path.", term:"trace"},
+    {n:["router"], e:["e_routed_router"], t:"Router: a rule matches", d:"'play' + a title → PLAY. Code parses title 'The Friend' and year '2025'; a year is kept only because you typed one. No model call.", term:"router · rules"},
+    {n:["workflows"], e:["e_router_wf"], t:"PLAY workflow", d:"Fixed steps in code. Both services → ask; a named service → use it; several matches → ask; none → say so.", term:"workflow"},
+    {n:["toolbox","login","kc"], e:["e_wf_tb","e_tb_login","e_login_kc"], t:"Only the servers this path needs", d:"McpToolbox opens catalog-mcp and device-mcp with two narrow tokens (audience catalog-mcp, device-mcp). Nothing here can read taste.", term:"token audience"},
+    {n:["catalogS","rapid"], e:["e_tb_cat","e_cat_rapid"], t:"search_title over MCP", d:"call_traced: a call made by code gets the same span and trace entry as a model's, so the evals check it the same way.", term:"MCP tool call"},
+    {n:["deviceS","tv"], e:["e_tb_dev","e_dev_tv"], t:"play_title with the id, by code", d:"The content id goes from search to play without passing through any model. device-mcp picks your profile from the token.", term:"identity from the token"},
+    {n:["recorder","toolbox","tasteS","pg"], e:["e_wf_rec","e_rec_tb","e_tb_taste","e_taste_pg"], t:"Recorder writes history", d:"Only after a real play (not a dry run), with its own short taste token. A failure marks its span as an error.", term:"bookkeeping as code"},
+    {n:["tracing","jaeger"], e:["e_tr_jaeger"], t:"A template answer and the trace", d:"The sentence is a template: it cannot claim playback. The trace has no 'chat' spans, because no model was called.", term:"span"},
+  ]},
+  {id:"song", label:"play taaki taaki rumba on you tube", phase:"p3e", cost:"<b>0</b> model calls · route SONG", steps:[
+    {n:["user","routedpy"], e:["e_user_routed"], t:"You run routed.py", d:"Same entry point.", term:""},
+    {n:["router"], e:["e_routed_router"], t:"Router: 'you tube' → SONG", d:"The rule accepts youtube, you tube and yt (a misroute found live). Query: 'taaki taaki rumba'.", term:"misroute"},
+    {n:["workflows"], e:["e_router_wf"], t:"SONG workflow", d:"Search YouTube, then play the first video. No model judges the result.", term:"workflow"},
+    {n:["toolbox","login","kc"], e:["e_wf_tb","e_tb_login","e_login_kc"], t:"Catalog + device tokens", d:"Same least privilege as PLAY.", term:"least privilege"},
+    {n:["catalogS","yt"], e:["e_tb_cat","e_cat_yt"], t:"search_youtube", d:"catalog-mcp runs yt-dlp and returns the top 3: video id, title, channel, duration.", term:""},
+    {n:["deviceS","tv"], e:["e_tb_dev","e_dev_tv"], t:"play_title(service='youtube')", d:"An 11-character video id (a link is refused). YouTube has no profile picker.", term:"input validation"},
+    {n:["recorder","tasteS","pg"], e:["e_wf_rec","e_rec_tb","e_tb_taste","e_taste_pg"], t:"History, title shortened", d:"YouTube titles can exceed taste-mcp's 100-character limit; history_title() cuts them at a word.", term:""},
+  ]},
+  {id:"suggest", label:"me and Mishika want to watch something", phase:"p3e", cost:"~<b>3</b> model calls · route SUGGEST (was ~13 with nested Catalog agents)", steps:[
+    {n:["user","routedpy","router"], e:["e_user_routed","e_routed_router"], t:"Router: SUGGEST", d:"'me and Mishika' → SUGGEST. If the request also states a preference, the Taste skill saves it first.", term:"router"},
+    {n:["skills"], e:["e_router_skills"], t:"Load the skill: skills/suggest.md", d:"skills.py reads the header (servers, offer, scopes, local_tools, max_turns) and the instructions. The Router chose it, so this costs no model call.", term:"skill"},
+    {n:["consensusA"], e:["e_skills_cons"], t:"Build the Consensus agent", d:"An Agent made from the skill: shown only get_household_taste and check_titles.", term:"agent"},
+    {n:["groq"], e:["e_cons_groq"], t:"Model call 1: decide", d:"The model asks for get_household_taste with the usernames (gaurav, mishika).", term:"model call"},
+    {n:["toolbox","login","kc","tasteS","pg"], e:["e_cons_tb","e_tb_login","e_login_kc","e_tb_taste","e_taste_pg"], t:"Household read, with permission", d:"Its taste token also carries taste-household-read. taste-mcp checks the permission, membership and Mishika's own consent, reads each person in their own RLS transaction (likes and dislikes only) and audits every name.", term:"scope · consent · audit"},
+    {n:["groq","checkT","toolbox","catalogS","rapid"], e:["e_cons_groq","e_cons_ct","e_ct_tb","e_tb_cat","e_cat_rapid"], t:"Model call 2: propose · code verifies", d:"The model proposes up to 4 titles; check_titles (code) searches them in parallel and returns only the confirmed ones with ids.", term:"generate, then verify"},
+    {n:["groq"], e:["e_cons_groq"], t:"Model call 3: the answer", d:"Only confirmed titles, who was included and why. Nothing plays until you pick one.", term:"grounding"},
+  ]},
+  {id:"taste", label:"I don't like horror, and I love Nolan", phase:"p3e", cost:"~<b>3</b> model calls · route TASTE", steps:[
+    {n:["user","routedpy","router"], e:["e_user_routed","e_routed_router"], t:"Router: TASTE", d:"'I ... like / love / don't like' → TASTE.", term:"router"},
+    {n:["skills","tasteA"], e:["e_router_skills","e_skills_taste"], t:"Load skills/taste.md", d:"The Taste agent: only taste-mcp, get_household_taste hidden.", term:"skill"},
+    {n:["groq"], e:["e_taste_groq"], t:"Model: one call per item", d:"Two preferences → two remember_taste calls (the 12b lesson).", term:"agent judgement"},
+    {n:["toolbox","login","kc","tasteS","pg"], e:["e_taste_tb","e_tb_login","e_login_kc","e_tb_taste","e_taste_pg"], t:"remember_taste ×2", d:"Saved for the person in the TOKEN, whatever names the words mention.", term:"identity from the token"},
+    {n:["groq"], e:["e_taste_groq"], t:"The answer", d:"Says exactly what the tools did, nothing more.", term:""},
+  ]},
+  {id:"fallback", label:"pause the tv  (unclear)", phase:"p3e", cost:"1 router call (if ROUTER_MODEL) + the team: <b>1–5+</b> model calls", steps:[
+    {n:["user","routedpy","router"], e:["e_user_routed","e_routed_router"], t:"Router: no rule is sure", d:"Unclear requests are never guessed.", term:"router"},
+    {n:["groq"], e:["e_router_groq"], t:"Optional: the small model", d:"With ROUTER_MODEL set, one cheap call classifies it; odd answers mean FALLBACK.", term:"router model"},
+    {n:["supervisor"], e:["e_router_sup"], t:"FALLBACK: the Phase 3 team", d:"The Supervisor agent handles anything the router could not place.", term:"fallback"},
+    {n:["groq","bridges","catalogA"], e:["e_sup_groq","e_sup_bridges","e_br_cat","e_cat_groq"], t:"Agents through bridges, if needed", d:"'Agent as a tool': a whole Catalog agent runs inside the Supervisor's tool call. Flexible but expensive: each extra agent costs at least 2 model calls.", term:"bridge"},
+    {n:["toolbox","catalogS","deviceS"], e:["e_cat_tb","e_tb_cat","e_sup_tb","e_tb_dev"], t:"Each agent: only its own tokens", d:"The Catalog agent holds only a catalog token; the Supervisor holds only device. A model reading catalog text cannot touch the TV.", term:"least privilege per agent"},
+  ]},
+  {id:"single", label:"play The Friend 2025  (agent.py, Phase 1-2)", phase:"p2", cost:"<b>3</b> model calls · one agent holds every tool and token", steps:[
+    {n:["user","agentpy","loop"], e:["e_user_agent","e_agent_loop"], t:"One agent loop", d:"The model sees every tool from every server.", term:"agent loop"},
+    {n:["groq"], e:["e_loop_groq"], t:"Model call 1: 'call search_title'", d:"The model proposes; code decides whether to run it.", term:"model call"},
+    {n:["toolbox","login","kc","catalogS","rapid"], e:["e_loop_tb","e_tb_login","e_login_kc","e_tb_cat","e_cat_rapid"], t:"search_title", d:"Narrow token per server even here (Phase 2).", term:"token audience"},
+    {n:["groq","deviceS","tv"], e:["e_loop_groq","e_tb_dev","e_dev_tv"], t:"Model call 2: 'call play_title'", d:"The model copies the content id from the search result into its tool call.", term:""},
+    {n:["recorder","tasteS","pg"], e:["e_loop_rec","e_rec_tb","e_tb_taste","e_taste_pg"], t:"Recorder", d:"after_tool hook: code, not the model, writes history.", term:"bookkeeping as code"},
+    {n:["groq"], e:["e_loop_groq"], t:"Model call 3: the answer", d:"Written by the model: it can hedge or overclaim (what the evals measure).", term:""},
+  ]},
+];
+
+const GLOSS = [
+  ["Agent","A model in a loop with a prompt and a set of tools. The model proposes a tool call; code decides and runs it."],
+  ["Model call","One request to Groq: the conversation and offered tools in, a tool request or an answer out. The unit of cost and latency."],
+  ["Tool","A named function with a description and a schema that a model may ask for, e.g. search_title."],
+  ["MCP server","A process that offers tools over the Model Context Protocol (stdio or HTTP). No model inside."],
+  ["McpToolbox","The client side: connects to servers, lists their tools, shows the model only the offered ones, routes each call."],
+  ["Bridge (agent as a tool)","A LocalTool whose function runs another agent. Only the question goes down, only the answer comes back."],
+  ["Workflow","Fixed steps in code. Predictable and free; rules are guarantees, not requests."],
+  ["Router","Picks the path first: rules, then an optional small model, otherwise the fallback. Never guesses."],
+  ["Skill","A route as a file: instructions + tools + permissions + turn budget. Picked by the router, so loading one is free."],
+  ["Token audience","The one server a token is valid for. A catalog token is refused at device-mcp."],
+  ["Scope (permission)","An extra right on a token, e.g. taste-household-read, asked for only by the agent that needs it."],
+  ["Recorder","Bookkeeping that must always happen, done by code after a real play."],
+  ["Span / trace","A span is one piece of work with a start, an end and a parent; a trace is all spans of one request, across processes."],
+  ["Groundedness","Every title in an answer must have come back from a search in that run: an eval check on the trace."],
+  ["Graph node / edge","A node is one step (a function of the state); a conditional edge is a small function of the state that names the next node."],
+  ["Checkpoint","The state saved after a node. A crashed request resumes from the last one, so a node may run twice: at least once."],
+  ["Idempotency key","One key per request for an action. A repeat with the same key gets the first result back instead of acting again."],
+  ["Retry with backoff + jitter","Try again after a transient error, waiting longer each time and a random part of it. Never for errors that cannot go away."],
+  ["Circuit breaker","After repeated failures, stop calling a service for a while and fail fast; then let one trial call through."],
+];
+
+/* ---------------------------------------------------------------- state */
+let phase = "p4", scen = null, step = 0, selected = "graph";
+const $ = s => document.querySelector(s);
+const svg = $("#svg"), NS = "http://www.w3.org/2000/svg";
+const KIND = {entry:["--k-entry","--tint-entry"], agent:["--k-agent","--tint-agent"], code:["--k-code","--tint-code"],
+  skill:["--k-skill","--tint-skill"], server:["--k-server","--tint-server"], ext:["--k-ext","--tint-ext"],
+  sec:["--k-sec","--tint-sec"], obs:["--k-obs","--tint-obs"], plan:["--k-plan","--tint-plan"]};
+const KINDNAME = {entry:"entry point", agent:"agent · calls a model", code:"code · no model", skill:"skill file", server:"MCP server",
+  ext:"outside service", sec:"identity", obs:"observability", plan:"planned"};
+const el = (tag, attrs={}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const visible = n => PI[n.since] <= PI[phase];
+const isNew = n => n.since === phase;
+const abstractedNote = n => { if (!n.abstracted) return null; let note = null;
+  for (const k in n.abstracted) if (PI[k] <= PI[phase]) note = n.abstracted[k]; return note; };
+
+function anchor(a, b) {
+  const ax = a.x + a.w, ay = a.y + a.h/2, bx = b.x, by = b.y + b.h/2;
+  if (Math.abs(a.x - b.x) < 30) {                      // same column: loop out on the right
+    const x = a.x + a.w, bend = x + 34;
+    return {d:`M${x},${ay} C${bend},${ay} ${bend},${by} ${x},${by}`, lx: bend - 4, ly: (ay+by)/2};
+  }
+  if (b.x < a.x) {                                      // going left
+    const sx = a.x, ex = b.x + b.w, mx = (sx+ex)/2;
+    return {d:`M${sx},${ay} C${mx},${ay} ${mx},${by} ${ex},${by}`, lx: mx, ly: (ay+by)/2};
+  }
+  const mx = (ax + bx)/2;
+  return {d:`M${ax},${ay} C${mx},${ay} ${mx},${by} ${bx},${by}`, lx: mx, ly: (ay+by)/2};
+}
+
+function draw() {
+  svg.innerHTML = "";
+  const defs = el("defs", {}, svg);
+  const mk = (id, color) => { const m = el("marker", {id, viewBox:"0 0 10 10", refX:"9", refY:"5", markerWidth:"7", markerHeight:"7", orient:"auto-start-reverse"}, defs);
+    el("path", {d:"M0,0 L10,5 L0,10 z", fill:color}, m); };
+  mk("arr", "var(--line)"); mk("arrHot", "var(--accent)");
+  const lanes = [[10,"You & checks",170],[190,"Entry · router",195],[400,"Agents · paths",220],[630,"Tools · identity",200],[840,"MCP servers",190],[1040,"Outside",190]];
+  lanes.forEach(([x,label,w]) => { el("rect", {x, y:0, width:w, height:760, class:"lanebg", opacity:.35}, svg);
+    const t = el("text", {x: x+8, y: 752, class:"lanehdr"}, svg); t.textContent = label; });
+
+  const s = scen ? SCEN.find(x=>x.id===scen).steps[step] : null;
+  const hotN = new Set(s ? s.n : []), hotE = new Set(s ? s.e : []);
+  const visN = new Set(N.filter(visible).map(n=>n.id));
+
+  for (const e of E) {
+    if (PI[e.since] > PI[phase] || !visN.has(e.f) || !visN.has(e.t)) continue;
+    const a = NODE[e.f], b = NODE[e.t], g = el("g", {class:`edge ${e.kind}` + (hotE.has(e.id) ? " hot" : (s ? " dim" : ""))}, svg);
+    const p = anchor(a, b);
+    el("path", {d:p.d, "marker-end": hotE.has(e.id) ? "url(#arrHot)" : "url(#arr)"}, g);
+    if (e.label && (!s || hotE.has(e.id))) {
+      const tw = e.label.length * 6.2 + 8;
+      el("rect", {x:p.lx - tw/2, y:p.ly - 8, width:tw, height:15, rx:3, class:"lblbg"}, g);
+      const t = el("text", {x:p.lx, y:p.ly + 3.5, "text-anchor":"middle"}, g); t.textContent = e.label;
+    }
+  }
+
+  for (const n of N) {
+    if (!visible(n)) continue;
+    const [stroke, fill] = KIND[n.kind], note = abstractedNote(n);
+    const cls = ["node", s && !hotN.has(n.id) ? "dim" : "", hotN.has(n.id) ? "hot" : "", note ? "abstracted" : "", selected === n.id ? "sel" : ""].join(" ");
+    const g = el("g", {class:cls, tabindex:"0", role:"button", "aria-label": `${n.t}: ${n.s.replace(/\n/g," ")}`}, svg);
+    const rx = n.kind === "agent" ? 16 : n.kind === "ext" ? 10 : 5;
+    el("rect", {x:n.x, y:n.y, width:n.w, height:n.h, rx, class:"box", fill:`var(${fill})`, stroke:`var(${stroke})`,
+      "stroke-dasharray": n.kind === "plan" ? "6 4" : (note ? "5 4" : "none")}, g);
+    if (n.kind === "server") el("rect", {x:n.x+3, y:n.y+3, width:n.w-6, height:n.h-6, rx:3, fill:"none", stroke:`var(${stroke})`, "stroke-width":.6, opacity:.6}, g);
+    const t = el("text", {x:n.x+12, y:n.y+20, class:"t"}, g); t.textContent = n.t;
+    n.s.split("\n").forEach((line,i) => { const st = el("text", {x:n.x+12, y:n.y+35+i*13, class:"s"}, g); st.textContent = line; });
+    if (isNew(n)) { const tag = el("text", {x:n.x+n.w-8, y:n.y+14, "text-anchor":"end", class:"tag", fill:"var(--accent)"}, g); tag.textContent = "NEW"; }
+    else if (note) { const tag = el("text", {x:n.x+n.w-8, y:n.y+14, "text-anchor":"end", class:"tag", fill:"var(--muted)"}, g); tag.textContent = "MOVED"; }
+    g.addEventListener("click", () => select(n.id));
+    g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(n.id); } });
+  }
+}
+
+function select(id) { selected = id; renderDetail(); draw(); }
+
+function renderDetail() {
+  const n = NODE[selected], [stroke, fill] = KIND[n.kind], note = abstractedNote(n);
+  const ph = PHASES[PI[n.since]];
+  $("#detail").innerHTML = `
+    <span class="kindpill" style="color:var(${stroke});border-color:var(${stroke});background:var(${fill})">${KINDNAME[n.kind]}</span>
+    <h2>${n.t}</h2>
+    <p style="margin:0">${n.what}</p>
+    ${note && PI[phase] >= 0 ? `<p class="hint"><b>In this phase:</b> ${note}</p>` : ""}
+    <dl>
+      <dt>Since</dt><dd>${ph.short} · ${ph.label}</dd>
+      <dt>Lives in</dt><dd><code>${n.file}</code></dd>
+      <dt>Configured by</dt><dd>${n.config}</dd>
+      <dt>Talks to</dt><dd>${n.talks}</dd>
+    </dl>`;
+}
+
+function renderRail() {
+  $("#rail").innerHTML = "";
+  PHASES.forEach(p => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = p.planned ? "planned" : ""; b.setAttribute("aria-pressed", p.k === phase);
+    b.innerHTML = `<span class="k">${p.short}</span>${p.label}`;
+    b.addEventListener("click", () => { phase = p.k; if (scen && SCEN.find(x=>x.id===scen).phase !== phase) { scen = null; step = 0; }
+      if (!visible(NODE[selected])) selected = "user"; renderAll(); });
+    $("#rail").appendChild(b);
+  });
+  const note = PHASE_NOTES[phase], p = PHASES[PI[phase]];
+  const li = a => a.map(x=>`<li>${x}</li>`).join("");
+  $("#phasebox").innerHTML = `<h3>${p.short} · ${p.label}${p.planned ? " · not built yet" : ""}</h3>
+    <div class="cols"><div><h4>Added</h4><ul>${li(note.added)}</ul></div>
+    <div><h4>Changed</h4><ul>${li(note.changed)}</ul></div>
+    <div><h4>Now hidden behind an abstraction</h4><ul>${li(note.hidden)}</ul></div></div>`;
+}
+
+function renderScen() {
+  $("#scen").innerHTML = "";
+  SCEN.forEach(sc => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = sc.label; b.setAttribute("aria-pressed", sc.id === scen);
+    b.addEventListener("click", () => { scen = sc.id; step = 0; phase = sc.phase; selected = sc.steps[0].n[sc.steps[0].n.length-1]; renderAll(); });
+    $("#scen").appendChild(b);
+  });
+  const steps = $("#steps"); steps.innerHTML = "";
+  if (!scen) {
+    $("#count").textContent = ""; $("#cost").innerHTML = "";
+    steps.innerHTML = `<li style="cursor:default;grid-template-columns:1fr"><span class="sd">Choose a request above. The diagram switches to the phase it belongs to and highlights each step's path.</span></li>`;
+    $("#prev").disabled = $("#next").disabled = true; return;
+  }
+  const sc = SCEN.find(x=>x.id===scen);
+  $("#cost").innerHTML = sc.cost;
+  sc.steps.forEach((st,i) => {
+    const li = document.createElement("li"); li.className = i === step ? "on" : "";
+    li.innerHTML = `<div><div class="st">${st.t}</div><div class="sd">${st.d}</div>${st.term ? `<div class="term">${st.term}</div>` : ""}</div>`;
+    li.addEventListener("click", () => { step = i; selected = st.n[st.n.length-1]; renderAll(); });
+    steps.appendChild(li);
+  });
+  $("#count").textContent = `step ${step+1} of ${sc.steps.length}`;
+  $("#prev").disabled = step === 0; $("#next").disabled = step === sc.steps.length - 1;
+}
+
+$("#prev").addEventListener("click", () => { if (step > 0) { step--; const st = SCEN.find(x=>x.id===scen).steps[step]; selected = st.n[st.n.length-1]; renderAll(); } });
+$("#next").addEventListener("click", () => { const sc = SCEN.find(x=>x.id===scen); if (step < sc.steps.length-1) { step++; selected = sc.steps[step].n[sc.steps[step].n.length-1]; renderAll(); } });
+
+function renderGloss() { $("#gloss").innerHTML = GLOSS.map(([k,v]) => `<div><b>${k}</b><p>${v}</p></div>`).join(""); }
+function renderAll() { renderRail(); renderScen(); draw(); renderDetail(); }
+renderGloss(); renderAll();
+</script>
+
+</body></html>

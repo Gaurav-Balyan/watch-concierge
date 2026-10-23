@@ -33,9 +33,12 @@ run_agent() runs the same all-in-one "concierge" agent as before, so behaviour,
 evals and tests are unchanged. Specialist agents are just other Agent(...)s.
 """
 import asyncio
+import contextvars
+import hashlib
 import json
 import os
 import sys
+import uuid
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Awaitable, Callable
@@ -66,6 +69,11 @@ SERVERS = {
 }
 if config.TASTE_MCP_URL:   # taste has no stdio mode: per-person data needs a login
     SERVERS["taste"] = config.TASTE_MCP_URL
+
+# Phase 4: WHICH request this is. graph.run_graph sets it to the graph's thread id, so a resumed or
+# retried run has the SAME id. McpToolbox turns it into the idempotency_key of action tools (play_title).
+# Plumbing like identity: the model never sees it and cannot set it.
+REQUEST_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
 # Tools the AGENT CODE calls, never the model. Bookkeeping must not depend on the model
 # remembering to do it (or being talked out of it).
@@ -121,14 +129,25 @@ def simplify_schema(schema):
     return out
 
 
+IDEMPOTENCY_ARG = "idempotency_key"     # filled in by McpToolbox.call from REQUEST_ID, never by a model
+
+
+def tool_schema(mcp_tool) -> dict:
+    return getattr(mcp_tool, "input_schema", None) or getattr(mcp_tool, "inputSchema", None) or {}
+
+
 def to_groq_tool(mcp_tool) -> dict:
-    schema = getattr(mcp_tool, "input_schema", None) or getattr(mcp_tool, "inputSchema", None) or {}
+    schema = simplify_schema(tool_schema(mcp_tool))
+    if IDEMPOTENCY_ARG in schema.get("properties", {}):
+        # Plumbing, like identity: hidden from the model, so it can neither forget nor fake it.
+        schema = {**schema, "properties": {k: v for k, v in schema["properties"].items() if k != IDEMPOTENCY_ARG},
+                  "required": [r for r in schema.get("required", []) if r != IDEMPOTENCY_ARG]}
     return {
         "type": "function",
         "function": {
             "name": mcp_tool.name,
             "description": " ".join((mcp_tool.description or "").split()),
-            "parameters": simplify_schema(schema),
+            "parameters": schema,
         },
     }
 
@@ -180,6 +199,8 @@ class McpToolbox:
         self.read_only: dict[str, bool] = {}
         self.transports: dict[str, str] = {}   # server -> "stdio" | "http, as <user>"
         self.local: dict[str, LocalTool] = {}  # tool name -> in-process tool
+        self.keyed: set[str] = set()           # tools that take an idempotency_key (Phase 4)
+        self._own_request_id = uuid.uuid4().hex[:12]   # when no REQUEST_ID is set (agent.py, routed.py)
 
     async def __aenter__(self):
         await self._stack.__aenter__()
@@ -196,11 +217,13 @@ class McpToolbox:
             if target.startswith(("http://", "https://")):
                 # HTTP: this server gets a token whose audience is ONLY "<name>-mcp".
                 # The same login cannot be replayed by this server against another one.
-                with span("keycloak token", {"keycloak.audience": f"{name}-mcp",            # never the token itself
-                                             "keycloak.extra_scopes": list(self.scopes.get(name, ())) or None}):
-                    token = login.access_token_for(f"{name}-mcp", tuple(self.scopes.get(name, ())))
-                http = await self._stack.enter_async_context(
-                    create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}))
+                # Phase 4: the token renews itself before it expires, and once after a 401 (login.RefreshingAuth).
+                audience, extra = f"{name}-mcp", tuple(self.scopes.get(name, ()))
+                auth = login.RefreshingAuth(lambda: login.access_token_for(audience, extra))
+                with span("keycloak token", {"keycloak.audience": audience,            # never the token itself
+                                             "keycloak.extra_scopes": list(extra) or None}):
+                    auth.current()                # the first token NOW: a login problem shows up at connect
+                http = await self._stack.enter_async_context(create_mcp_http_client(auth=auth))
                 transport = streamable_http_client(target, http_client=http)
                 user = login.load_login()["username"]
                 self.transports[name] = f"http, as {user}"
@@ -225,6 +248,8 @@ class McpToolbox:
                 self.routes[t.name] = (name, client)
                 ann = getattr(t, "annotations", None)
                 self.read_only[t.name] = bool(ann and getattr(ann, "read_only_hint", False))
+                if IDEMPOTENCY_ARG in tool_schema(t).get("properties", {}):
+                    self.keyed.add(t.name)
                 discovered.append(t.name)
                 if self._shown(t.name):
                     self.tools.append(to_groq_tool(t))   # only these are shown to the model
@@ -254,6 +279,12 @@ class McpToolbox:
         """Names of the tools the model was shown. Only these may run when the model asks."""
         return {t["function"]["name"] for t in self.tools}
 
+    def idempotency_key(self, tool: str) -> str:
+        """One key per (request, action tool): 'play at most once per request' as data. A resumed or
+        retried graph run has the same REQUEST_ID, so device-mcp sees the same key and does not act twice."""
+        request_id = REQUEST_ID.get() or self._own_request_id
+        return f"{tool}:{hashlib.sha256(request_id.encode()).hexdigest()[:24]}"
+
     def add_local(self, tool: LocalTool):
         if tool.name in self.routes:
             raise RuntimeError(f"Tool name clash: '{tool.name}' is offered by "
@@ -277,6 +308,8 @@ class McpToolbox:
                 cause = first_cause(e)
                 return f"{self.local[name].owner} failed: {type(cause).__name__}: {cause}", True
         _, client = route
+        if name in self.keyed:
+            args = {**args, IDEMPOTENCY_ARG: self.idempotency_key(name)}
         try:
             result = await client.call_tool(name, args, read_timeout_seconds=TOOL_CALL_TIMEOUT)
         except Exception as e:  # noqa: BLE001   protocol-level failure (server died, timeout)
@@ -305,12 +338,28 @@ async def record_watch_if_played(toolbox: "McpToolbox", args: dict, result_text:
         result = json.loads(result_text)
     except json.JSONDecodeError:
         return
-    if result.get("status") != "requested":
-        return                       # dry run or failure: nothing was watched
+    if result.get("status") != "requested" or result.get("duplicate"):
+        return                       # dry run, failure, or a repeat of an earlier attempt: nothing new watched
+    title = history_title(args.get("title") or result.get("title") or args.get("content_id", "?"))
     text, is_error = await toolbox.call("record_watch", {
-        "title": args.get("title") or result.get("title") or args.get("content_id", "?"),
-        "service": args.get("service"), "content_id": args.get("content_id")})
+        "title": title, "service": args.get("service"), "content_id": args.get("content_id")})
     print(f"    (agent) record_watch: {' '.join(text.split())[:200]}")
+    if is_error:
+        # Bookkeeping that fails must be VISIBLE (seen live: a long YouTube title was refused, and the
+        # trace still looked fine). Mark the open span (the recorder's) as failed.
+        failed(current_span(), text)
+
+
+HISTORY_TITLE_MAX = 100     # taste-mcp refuses longer items (its own check stays: defence in depth)
+
+
+def history_title(title: str) -> str:
+    """A title that fits the history: whitespace collapsed, long ones cut at a word with an ellipsis."""
+    title = " ".join(str(title).split())
+    if len(title) <= HISTORY_TITLE_MAX:
+        return title
+    cut = title[:HISTORY_TITLE_MAX - 1].rsplit(" ", 1)[0].rstrip(" |-,(")
+    return cut + "…"
 
 
 async def record_watch_after_play(toolbox: "McpToolbox", name: str, args: dict, result_text: str):
@@ -360,7 +409,11 @@ class Agent:
     async def loop(self, toolbox: McpToolbox, request: str, trace: list | None = None) -> str:
         """The tool-use loop. If `trace` is a list, every tool call is appended to it as a dict."""
         max_turns = self.max_turns or MAX_TURNS
-        client = AsyncGroq()   # reads GROQ_API_KEY from the environment
+        # Reads GROQ_API_KEY from the environment. Phase 4: the SDK retries rate limits, 5xx and dropped
+        # connections itself, with backoff; we set how often, and do NOT add a second retry loop on top.
+        client = AsyncGroq()
+        if hasattr(client, "with_options"):      # the real SDK (tests and evals install simpler fakes)
+            client = client.with_options(max_retries=config.GROQ_MAX_RETRIES)
         messages = [
             {"role": "system", "content": self.system},
             {"role": "user", "content": request},
@@ -491,6 +544,23 @@ class Agent:
 
         current_span().set_attribute("agent.outcome", "STOPPED at max_turns")
         return f"Stopped after {max_turns} turns without a final answer."
+
+
+async def call_traced(toolbox: "McpToolbox", name: str, args: dict, trace: list | None, who: str) -> tuple[str, bool]:
+    """A tool call made by CODE (a workflow, a code-side tool), not proposed by a model. Same span and
+    same trace entry as a model's call, so tracing and the evals see it exactly the same way.
+    `who` names the caller in the trace, e.g. "workflow:play"."""
+    with span(f"execute_tool {name}", {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name,
+                                       "gen_ai.agent.name": who, "tool.args": args,
+                                       "tool.called_by": "code"}) as s:
+        result, is_error = await toolbox.call(name, args)
+        set_attrs(s, {"tool.executed": True, "tool.is_error": is_error, "tool.result": content(result)})
+        if is_error:
+            failed(s, result)
+    if trace is not None:
+        trace.append({"tool": name, "args": args, "result": result, "is_error": is_error,
+                      "executed": True, "agent": who})
+    return result, is_error
 
 
 def concierge() -> Agent:

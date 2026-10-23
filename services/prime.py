@@ -10,8 +10,6 @@ always start from a closed app.
 Verified: the first ENTER picks the profile, and a second ENTER on the title
 page presses Play (for subscription titles).
 """
-import asyncio
-
 from aiowebostv import WebOsClient
 
 import config
@@ -32,7 +30,7 @@ async def start_at_picker(c: WebOsClient):
     """Close Prime if open, relaunch it, and wait until the profile picker shows."""
     await tv.close_app_if_open(c, config.PRIME_APP)
     await c.launch_app(config.PRIME_APP)
-    await asyncio.sleep(config.PRIME_PICKER_WAIT)
+    await tv.pause("prime picker", config.PRIME_PICKER_WAIT, ready=lambda: c.tv_state.current_app_id == config.PRIME_APP)
 
 
 async def open_title(c: WebOsClient, gti: str, press_play: bool = DEFAULT_PLAY,
@@ -43,13 +41,13 @@ async def open_title(c: WebOsClient, gti: str, press_play: bool = DEFAULT_PLAY,
     """
     await start_at_picker(c)
     await tv.send_link(c, config.PRIME_APP, to_gti(gti))
-    await asyncio.sleep(config.PRIME_LINK_TO_KEY_WAIT)   # let the picker accept input
+    await tv.pause("prime link to key", config.PRIME_LINK_TO_KEY_WAIT)   # let the picker accept input
     if profile is not None:
         await tv.press(c, tv.profile_keys(profile, config.PRIME_PICKER_LAYOUT), gap=0.8)
     else:
         await tv.press(c, config.PRIME_PROFILE_KEYS)     # choose the highlighted profile
-    await asyncio.sleep(config.PRIME_TITLE_WAIT)         # title page loads
+    await tv.pause("prime title page", config.PRIME_TITLE_WAIT)         # title page loads
     if press_play:
         await c.button("ENTER")
-        await asyncio.sleep(3)
+        await tv.pause("after play", 3)
     print("Done. Check the TV: did the profile get picked and the title page open?")
