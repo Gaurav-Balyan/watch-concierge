@@ -151,13 +151,3 @@ def matches_from_shows(shows: list, year: str | None = None, only: str | None = 
 async def find_title(title: str, year: str | None = None, only: str | None = None) -> list[Match]:
     """Search and return playable matches. `only` restricts to one service."""
     return matches_from_shows(await search_shows(title), year, only)
-
-
-def pick_service(ids: dict, only: str | None = None) -> str | None:
-    """Choose a service for a match, following SERVICE_PREFERENCE."""
-    if only:
-        return only if only in ids else None
-    for service in config.SERVICE_PREFERENCE:
-        if service in ids:
-            return service
-    return next(iter(ids), None)

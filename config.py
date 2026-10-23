@@ -53,10 +53,6 @@ NETFLIX_APP = "netflix"
 PRIME_APP = "amazon"
 YOUTUBE_APP = "youtube.leanback.v4"
 
-# ---------------------------------------------------------------- Which service wins
-# When a title is on several services, the first one in this list is used.
-SERVICE_PREFERENCE = _list("SERVICE_PREFERENCE", "netflix,prime")
-
 # ---------------------------------------------------------------- Delays (seconds)
 # If a step fires too early, raise these first.
 POST_WAKE_WAIT = _int("POST_WAKE_WAIT", 5)                  # settle time once the TV answers after wake

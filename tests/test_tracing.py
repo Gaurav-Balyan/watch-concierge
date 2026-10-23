@@ -27,7 +27,7 @@ import multi_agent
 import tracing
 from test_agent_recovery import reply
 from test_auth import Skip
-from test_multi_agent import FAKE_SERVERS, HAPPY, TASTE_URL, RecordingGroq, servers, temp_login, token_spy
+from test_multi_agent import FAKE_SERVERS, HAPPY, TASTE_URL, RecordingGroq, temp_login, token_spy
 
 MEMORY = InMemorySpanExporter()
 tracing.setup("test", extra_exporter=MEMORY)      # once per process: a global provider

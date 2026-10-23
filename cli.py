@@ -1,13 +1,9 @@
 """
-Household Watch Concierge: command line.  Run from this folder:
+Household Watch Concierge: SETUP and TUNING commands for the TV. Run from this folder.
 
-Everyday:
-    python cli.py watch "The Friend"            # Netflix or Prime, whichever has it
-    python cli.py watch "The Boys" 2019         # optional year to disambiguate
-    python cli.py watch "Game Changer" yes      # force pressing Play (Prime defaults to no)
-    python cli.py watchnetflix "The Friend"     # Netflix only
-    python cli.py watchprime "The Boys"         # Prime only
-    python cli.py song tum hi ho arijit singh   # play a song on YouTube
+Everyday use is NOT here: use  python graph.py "play The Friend 2025"  (login, per-person profiles,
+dry run, idempotency, tracing). The direct-control commands below talk to the TV straight away, with
+none of that: they exist to pair the TV and to tune the service flows (waits, key presses).
 
 Setup and direct control:
     python cli.py pair                          # pair once, saves client key
@@ -29,7 +25,6 @@ import asyncio
 import json
 import sys
 
-import concierge
 import config
 import experiments
 import tv
@@ -48,27 +43,6 @@ def parse_year_play(args):
         elif a.isdigit() and len(a) == 4:
             year = a
     return year, play
-
-
-# ---------------------------------------------------------------- Everyday
-
-async def cmd_watch(title: str, *rest):
-    year, play = parse_year_play(rest)
-    await concierge.watch(title, year, play)
-
-
-async def cmd_watchnetflix(title: str, *rest):
-    year, play = parse_year_play(rest)
-    await concierge.watch(title, year, play, only="netflix")
-
-
-async def cmd_watchprime(title: str, *rest):
-    year, play = parse_year_play(rest)
-    await concierge.watch(title, year, play, only="prime")
-
-
-async def cmd_song(*words):
-    await concierge.song(" ".join(words))
 
 
 # ---------------------------------------------------------------- Setup and direct control

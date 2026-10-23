@@ -122,14 +122,6 @@ def right_play(service, content_id):
     return fn
 
 
-def valid_service_id_pair(pairs):
-    def fn(trace, answer):
-        a = first_play_args(trace)
-        got = (a.get("service"), str(a.get("content_id")))
-        return got in pairs, f"played {got}"
-    return fn
-
-
 def id_from_search(trace, answer):
     cid = first_play_args(trace).get("content_id")
     ok = bool(cid) and str(cid) in search_text(trace)

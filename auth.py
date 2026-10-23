@@ -71,7 +71,7 @@ class TokenVerifier:
     def verify(self, token: str) -> Caller:
         try:
             key = self._key_for_token(token)
-        except jwt.PyJWKClientConnectionError as e:
+        except jwt.PyJWKClientConnectionError:
             raise  # Keycloak unreachable is an infrastructure problem, not a bad token
         except jwt.PyJWKClientError as e:
             raise AuthError(AuthError.UNKNOWN_KEY, str(e)) from None
@@ -89,7 +89,7 @@ class TokenVerifier:
             )
         except jwt.ExpiredSignatureError as e:
             raise AuthError(AuthError.EXPIRED, str(e)) from None
-        except jwt.InvalidAudienceError as e:
+        except jwt.InvalidAudienceError:
             raise AuthError(AuthError.WRONG_AUDIENCE, f"token is not for {self.audience}") from None
         except jwt.InvalidIssuerError as e:
             raise AuthError(AuthError.WRONG_ISSUER, str(e)) from None
@@ -154,7 +154,6 @@ class McpTokenVerifier:
 
 
 if __name__ == "__main__":
-    import sys
     if len(sys.argv) != 3:
         sys.exit("usage: python auth.py <audience> <token>")
     try:

@@ -91,8 +91,7 @@ SUPERVISOR_SYSTEM = (
 # together with their tools, permissions and turn budget. The team and the router share them.
 TASTE_SKILL = skills.load("taste")
 SUGGEST_SKILL = skills.load("suggest")
-TASTE_SYSTEM = TASTE_SKILL.instructions          # kept as names: tests and evals read them
-CONSENSUS_SYSTEM = SUGGEST_SKILL.instructions
+CONSENSUS_SYSTEM = SUGGEST_SKILL.instructions    # kept as a name: test_household reads it
 
 CATALOG_MAX_TURNS = 4   # the Catalog agent's OWN budget, separate from the Supervisor's
 
@@ -101,9 +100,6 @@ def catalog_agent() -> agent.Agent:
     """A specialist: one server, one token audience (catalog-mcp)."""
     return agent.Agent("catalog", CATALOG_SYSTEM, {"catalog": agent.SERVERS["catalog"]},
                        max_turns=CATALOG_MAX_TURNS)
-
-
-HOUSEHOLD_TOOL = "get_household_taste"
 
 
 def taste_agent() -> agent.Agent:

@@ -452,7 +452,7 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   unit tests did not, because the tests only fed the model path a clean title.
 - HANDOFF.md written (Phase 3 closed). Next: Phase 4 in a new chat (see HANDOFF.md "Phase 4 starting point").
 
-## Phase 4: Resilience + LangGraph (IN PROGRESS)
+## Phase 4: Resilience + LangGraph (DONE 2026-10-23)
 - Step 1 (2026-10-23): `graph.py`, the routed design as a LangGraph 1.2 graph, THIN: nodes route, play,
   fallback; conditional edges after_route (PLAY -> play, else fallback) and after_play (None = "not mine" ->
   fallback, else END). Nodes call the existing router / workflows / team (McpToolbox as before; no LangGraph
@@ -480,17 +480,68 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   / STATUS requests (same answers + tools, 0 calls); taste/suggest WIRING with fake skill agents (which node,
   order, whose answer wins, username from the login); no taste server -> the team. 4 mutations, each fails
   its test. Dry evals (no Groq): graph == routed on all 10 no-model cases, #5/#13/#14 back to 0 calls.
-  Next: real graph evals + --compare with routed; then Step 3 = checkpointing + a crash drill.
+  (Then:) real graph evals + --compare with routed; then Step 3 = checkpointing + a crash drill.
+- Graph evals (Step 2, 3 reps): 44/45, 0.4 calls/run: = routed. #4 fixed (3/3). #6 1x no "?" (team wording).
+  These are OFFLINE evals (fixed cases, fake world, real model); online evals = checks on real traces (Phase 5).
+- Step 3, CHECKPOINTING: AsyncSqliteSaver (.state/checkpoints.sqlite, langgraph-checkpoint-sqlite). Thread id =
+  request id, printed first; `--pending`, `--resume <id>`. durability="sync": a checkpoint is on disk BEFORE the
+  next node starts (default writes in the background; a crash could lose it). LEARNED: a node runs AT LEAST
+  ONCE: a crash after its work but before its checkpoint re-runs it on resume. So checkpointing alone is not
+  enough for actions: it needs idempotency. Chaos hook CHAOS_CRASH=<node>[:after] = os._exit (a power cut).
+  Bug found by a test: pending() deadlocked (aget_state inside `async for alist()`: one aiosqlite connection).
+- Step 4, IDEMPOTENCY: agent.REQUEST_ID (contextvar; the graph sets the thread id). McpToolbox injects
+  idempotency_key = play_title:<hash(request id)> into tools that accept it and HIDES it from the model's schema
+  (plumbing, like identity). device-mcp: resilience.IdempotencyStore (.state/device_actions.sqlite): claim the
+  key BEFORE touching the TV ("started"), result AFTER ("done"). Repeat "done" -> first result + duplicate:true
+  (recorder skips it; workflow says it was not sent twice); "started" -> UNKNOWN_STATE (never repeat an unknown
+  outcome); other title same request -> ALREADY_PLAYED (one title per request, as data); TV_UNREACHABLE ->
+  forget (certainly nothing launched: a retry may). Drill: kill after play, resume: 1 launch (fake TV logs them).
+  Test isolation bug found: fixed drill ids met an earlier run's records in the shared eval state -> unique ids.
+- Step 5, RETRIES + BREAKER (resilience.py, lookup.py): order cache -> breaker -> retry -> HTTP. retry_async:
+  backoff x2 with equal jitter, only transient (timeouts, connection errors, 5xx, 429 only with Retry-After <= 5:
+  RapidAPI quotas are monthly). CircuitBreaker (SQLite, shared by all catalog processes: quick mode starts new
+  ones per request): 3 failed searches in a row -> open 60 s -> fail fast (CATALOG_UNAVAILABLE, "not a missing
+  title"); half-open trial. Groq: the SDK already retries (GROQ_MAX_RETRIES via with_options): ONE retry layer.
+  Graph: RetryPolicy on the code-workflow nodes only, for a server that died ("Connection closed"); safe because
+  play is idempotent. Agent nodes are NOT retried (a repeat = every model call again). Mutation testing found a
+  dead branch (half-open flag: the count already reopens it) -> removed; and a too-loose backoff test -> tightened.
+- Step 6, CACHE: TtlCache (.state/catalog.sqlite) 24 h fresh; stale-if-error up to 7 days when the API is down or
+  the breaker is open. Key = normalised title (the year filter is applied after). Source in the span
+  (catalog.source = api | cache | stale cache). Evals bypass it (they replace lookup.find_title).
+- Step 7, TV: what the TV CAN report is now a check: network answer after WoL (TV_WAKE_WINDOW 25 s; fully OFF
+  fails fast instead of ~39-90 s), power state (already Active -> no wake pauses, ~8 s saved; waking -> wait until
+  Active, then POST_WAKE_WAIT). What it CANNOT report (picker drawn, title page open) stays FIXED, but every wait
+  is a span "tv wait <name>" with tv.ready_after_s (when the app came to the front): data to tune them.
+  Unverified on the real TV: the first live runs should be watched (trace: tv network check, tv wait spans).
+- Step 8, TOKENS: login.RefreshingAuth (httpx2.Auth): renews 30 s before exp, and once after a 401 (one retry, no
+  loop: a real refusal still shows). McpToolbox uses it for every HTTP server; checked end to end against a real
+  MCP HTTP server, and the full suite against real Keycloak.
+- Step 9, DRILLS: evals/drills.py (5 drills, ~20 s, no Groq/TV/RapidAPI): crash+resume (1 launch), server dies
+  (node retried), API down (honest answers, breaker opens: last request fast), 429 (no retry), TV unreachable.
+  Tests: 153 (test_graph 11, test_resilience 18, test_routing 24), all passing with Keycloak + Postgres.
+- DECISION NEEDED (Gaurav): graph.py is the day-to-day entry. Numbers: graph 44/45 at 0.4 calls vs single
+  34/42 at 2.3 and team 39/42 at 3.7. Proposed: retire `agent.py "<request>"` and `routed.py` as entry points
+  (keep their code: agent.py is the engine, run_routed/run_team stay as eval baselines).
+
+- Gaurav's run (2026-10-23): 153 tests, 5 drills, graph evals 45/45 at 0.5 calls/run (first full score).
+- CLEANUP (2026-10-23): removed agent_inline_tools.py (Phase 1 reference copy; in git history) and concierge.py
+  + cli.py watch/watchnetflix/watchprime/song (a Phase 0 path that drove the TV with no login, dry run or
+  idempotency: a back door around Phases 2-4). cli.py is now pairing + tuning only. Dead code removed
+  (vulture + pyflakes): lookup.pick_service + config.SERVICE_PREFERENCE, youtube.find_video,
+  multi_agent.TASTE_SYSTEM / HOUSEHOLD_TOOL, cases.valid_service_id_pair, RefreshingAuth.fetches, unused
+  imports/variables in auth.py and 5 test files. README rewritten for the current layout. 153 tests pass.
+- LIVE CHECKS written down: SETUP.md section 4b (11 checks on the real TV, incl. a real crash + resume).
 
 ## Phase 5: NOT STARTED
+Decided 2026-10-23: NO approval step before device actions (Gaurav). Promptfoo: later, not now.
 
 ## Known fragile points carried forward
-- All waits are fixed sleeps, not checks (matters for Phase 4).
+- TV waits the TV cannot observe (picker, title page) are still fixed; their spans now measure them (Phase 4).
 - `close_app` is unreliable on this TV (Step 9: once 403 access denied, once OK).
 - Profiles are picked by position with blind key presses (no way to read the screen); if someone adds or
   reorders profiles, update NETFLIX_PROFILES / PRIME_PROFILES.
-- Access tokens last 5 min and the agent gets them at start: a run longer than that would get 401s mid-run
-  (Phase 4: refresh and retry on 401).
+- Access tokens: renewed before expiry and once after a 401 (Phase 4). The refresh token itself still ends after
+  1 day idle (python login.py).
 - Keycloak dev mode keeps its data inside the container: `docker rm` loses it (the realm file re-creates it).
-- Device actions currently run without confirmation (Phase 5 adds approval).
-- A retry today could relaunch a title (Phase 4 adds idempotency).
+- Device actions run without confirmation (decided 2026-10-23: no approval step).
+- Idempotency covers play_title only (the only action tool). A new action tool must accept idempotency_key too.

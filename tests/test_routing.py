@@ -13,7 +13,6 @@ Run:  python tests/test_routing.py        (or: pytest tests)
 import asyncio
 import contextlib
 import io
-import json
 import sys
 import types
 from pathlib import Path

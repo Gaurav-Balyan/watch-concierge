@@ -18,6 +18,7 @@ conda activate watch-concierge
 | `login.py` | Signs one person in (browser), keeps the login in `.login.json` | when needed | 8765 (briefly) |
 | `agent.py` | The single-agent concierge: you type a request, it uses the servers | your window | |
 | `multi_agent.py` | The team (Phase 3): Supervisor + Catalog agent + Taste agent | your window | |
+| `graph.py` | **Use this one** (Phase 4): the router + workflows + skills + team as a durable LangGraph graph | your window | |
 | Jaeger (optional) | Shows traces: who did what, how long it took | Docker container `jaeger` | 16686 (UI), 4318 |
 
 There are two ways to run the agent:
@@ -148,6 +149,18 @@ The first line printed says which route was taken and why:
 python routed.py "play The Friend 2025"
 python routed.py "me and Mishika want to watch something tonight"
 ```
+**Day to day, use `graph.py` (Phase 4)**: the same routes as `routed.py`, but DURABLE. Its first line prints a
+request id; if the run dies (crash, closed window, PC asleep), finish it from where it stopped. The play is never
+sent twice: device-mcp recognises the request's idempotency key.
+```powershell
+python graph.py "play The Friend 2025"         # first line: [graph] request id 20261023-171200-ab12cd
+python graph.py --pending                      # requests that did not finish
+python graph.py --resume 20261023-171200-ab12cd
+python graph.py --draw                         # the graph's shape (Mermaid text: paste into mermaid.live)
+```
+Phase 4 keeps small state files in `.state\` (git-ignored): checkpoints, the TV's idempotency records, the
+catalog cache and circuit breaker. Deleting the folder is safe (you lose unfinished requests and the cache).
+
 The TV uses the logged-in person's profile (Netflix: Gaurav 3, Mishika 4; Prime: Gaurav 1, Mishika 3).
 Mishika's Netflix profile is a Kids profile, so Netflix blocks mature titles there.
 
@@ -199,7 +212,8 @@ Every cross-person read is in the audit log:
 ## 3. Quick mode (no Docker, no login)
 Comment out the three `*_MCP_URL` lines in `.env`, then run `python agent.py "play The Friend 2025"`. The agent starts
 catalog and device itself. There are no taste tools, and the TV uses the highlighted profile.
-The non-agent CLI also works without anything running: `python cli.py watch "The Friend"`.
+`python graph.py "play The Friend 2025"` also works in quick mode (no login: no taste, highlighted profile).
+`cli.py` is only for pairing and tuning the TV (`python cli.py` lists its commands).
 
 ---
 
@@ -219,7 +233,9 @@ python tests\test_agent_loop.py     #  7  offline: record_watch is wired in by c
 python tests\test_multi_agent.py    # 11  the team: handoffs, each agent's tools and tokens, whose taste
 python tests\test_tracing.py        #  7  spans: one trace per request, nesting, no tokens in spans
 python tests\test_household.py      # 10  household read: permission, consent, no history, audit, agents
-python tests\test_routing.py        # 20  offline: router, workflow policies (0 model calls), skills
+python tests\test_routing.py        # 24  offline: router, workflow policies (0 model calls), skills
+python tests\test_graph.py          # 11  offline: the graph = routed.py (parity), its edges, node spans
+python tests\test_resilience.py     # 18  offline: crash + resume, idempotency, retry, breaker, cache, TV, 401
 ```
 Or all at once: `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
 not plain `pytest`: plain `pytest` can pick up Anaconda's base Python, which has none of the project's
@@ -232,12 +248,51 @@ python evals\run_evals.py --reps 3 --label myrun
 python evals\run_evals.py --compare evals\results\<a>.json evals\results\<b>.json
 python evals\run_evals.py --agent team --reps 3 --label team    # Phase 3: the team, same cases
 python evals\run_evals.py --agent routed --reps 3 --label routed  # Phase 3, Step 7: router + workflows
+python evals\run_evals.py --agent graph --reps 3 --label graph    # Phase 4: the graph (the day-to-day entry)
+```
+Failure drills (Phase 4; no Groq, no TV, no RapidAPI, about a minute): break one thing on purpose and see what the
+person is told, how long it took, and that nothing launched twice.
+```powershell
+python evals\drills.py
 ```
 `--agent team` runs the Supervisor + Catalog agent on the same fake servers (no taste, no login). Each run also
 reports MODEL CALLS, so the team's cost shows next to its pass rate. A team run makes roughly twice as many Groq
 calls: add `--delay 2` if you hit rate limits.
 
 ---
+
+## 4b. Live checks on the real TV (Phase 4)
+Tests, evals and drills use a fake TV. These checks are the part only your living room can do. Run them in
+order; each says what to look at. Window 1 = `.\start-concierge.ps1` (servers), window 4 = where you type.
+
+**Prepare (once)**
+```powershell
+docker start jaeger                                   # start-concierge.ps1 does not start it
+python login.py                                       # sign in as gaurav
+```
+In `.env`: `TRACING=print,jaeger`. Start with `DEVICE_DRY_RUN=1`. Close and reopen the device window after any
+`.env` change (the servers read `.env` at start).
+
+| # | Do | Expect | Look at |
+|---|---|---|---|
+| 1 | `python graph.py "play The Friend 2025"` (dry run) | "only a simulation", 0 model calls | printed tree: `graph` > `node route` > `node play` > `execute_tool search_title`, `play_title`; `connect` spans show `aud=catalog-mcp` / `aud=device-mcp` |
+| 2 | Same request again | same answer | Jaeger, service `catalog-mcp`: the 2nd search span has `catalog.source=cache` (no RapidAPI call) |
+| 3 | Set `DEVICE_DRY_RUN=0`, restart the device window. **TV ON.** `python graph.py "play The Friend 2025"` | the title opens on **Gaurav's** Netflix profile | trace: `tv network check` with `tv.answered_after_s` ~0; **no** `tv wait after wake` span. Each `tv wait netflix ...` span has `tv.ready_after_s`: write these down |
+| 4 | **TV in standby** (remote off, wait 1 min). Same request | the TV wakes and the title opens | `tv.answered_after_s` must be under 25. If you get "no answer within 25s", raise `TV_WAKE_WINDOW` in `.env` |
+| 5 | **TV fully off** (power at the wall) | in about 25 s: "The TV didn't respond ... Nothing was launched" | the `tv network check` span ends with `tv.outcome=no answer` |
+| 6 | **Crash drill, for real** (TV on): `$env:CHAOS_CRASH="play:after"`, then `python graph.py "play The Friend 2025"` | the title opens, then `[chaos] ... killing the process` | note the request id from the first line |
+| 7 | `$env:CHAOS_CRASH=""` then `python graph.py --pending`, then `python graph.py --resume <id>` | `--pending` lists it with `next: play`; resume answers "...not sent a second time"; **the TV does NOT relaunch** | `logs\device_mcp.log`: `play_title REPEAT of key ... not launching again` |
+| 8 | **Close the window** mid-play (a Prime title takes ~45 s): start it, close the window after ~10 s; **wait a minute** (the device server may still be finishing the play); new window: `--pending`, `--resume <id>` | EITHER "...not sent a second time" OR "UNKNOWN_STATE ... check the TV". **Never** a second launch | both answers are correct: which one depends on whether the play had finished when the window closed. Resumed too soon? "Another TV action is still running" (BUSY): nothing new starts, and that request ends there |
+| 9 | `python graph.py "play tum hi ho by arijit singh"` and `python graph.py "is the tv on?"` | song plays; status answers | `node song` / `node status`, 0 `chat` spans |
+| 10 | `python login.py` as **mishika**, `python graph.py "play The Friend 2025"` | **Mishika's** profile (Netflix Kids profile: mature titles blocked there) | `connect` spans `as mishika`; then log in as gaurav again |
+| 11 | `python graph.py "I like comedy, can you suggest a few titles"` | the preference is saved, then suggestions (only confirmed titles) | tree: `node route` > `node taste` > `node suggest` (two agents, in that order) |
+
+Optional, token renewal (Step 8): in the Keycloak admin console (http://localhost:8080, admin/admin), realm
+`household` > Realm settings > Tokens > Access Token Lifespan = **1 minute**. Run check 11 (several model calls,
+often > 30 s). Expect no 401 and no "Login problem". Set it back to **5 minutes** afterwards.
+
+When done: set `DEVICE_DRY_RUN` the way you want it day to day, and tell the assistant the numbers from 3 and 4
+(the `tv.ready_after_s` values): they decide whether the fixed waits can be shortened.
 
 ## 5. Troubleshooting
 | You see | Meaning and fix |
@@ -255,6 +310,10 @@ calls: add `--delay 2` if you hit rate limits.
 | `tracing: could NOT reach http://localhost:4318` | Jaeger is not running: `docker start jaeger` (or run the 1.5 command). |
 | `Groq REJECTED the model's tool call` | Normal. The model sent bad arguments; the agent tells it why and it retries. |
 | `TV_UNREACHABLE` | The TV is off or asleep beyond wake-on-LAN, or `TV_IP` is wrong. Check `logs\device_mcp.log`. |
+| `TV_UNREACHABLE: no answer on the network within 25s` but the TV was in standby | Phase 4 gives up early. Raise `TV_WAKE_WINDOW` in `.env` (the trace's `tv network check` span shows how long it took when it worked). |
+| `CATALOG_UNAVAILABLE ... paused for Ns` | The catalog API failed several times in a row, so the circuit breaker paused it (`CATALOG_BREAKER_RESET`, default 60 s). Wait, or delete `.state\catalog.sqlite`. |
+| `UNKNOWN_STATE: an earlier attempt of this same request started...` | A resumed request whose play was cut off mid-action. Look at the TV; ask again (a NEW request) if nothing opened. |
+| `[chaos] CHAOS_CRASH=...` | A failure drill setting is in your environment or `.env`. Remove `CHAOS_CRASH`. |
 | Nothing happens on the TV, result says `dry_run` | `DEVICE_DRY_RUN=1` in `.env`. Set `0`, then restart `device_mcp.py`. |
 
 Logs: `logs\device_mcp.log` (every TV action, with who asked), `logs\test_*.log` (servers started by the tests).

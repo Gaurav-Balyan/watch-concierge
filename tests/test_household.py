@@ -31,7 +31,7 @@ import agent
 import multi_agent
 from test_agent_recovery import reply
 from test_auth import Skip, keycloak_token
-from test_multi_agent import FAKE_SERVERS, TASTE_URL, RecordingGroq, run_offline, temp_login, token_spy
+from test_multi_agent import FAKE_SERVERS, TASTE_URL, run_offline, temp_login, token_spy
 from test_taste_http import ADMIN_TEST_DB_URL, TEST_DB_URL, URL, taste_server
 
 RUN = uuid.uuid4().hex[:8]

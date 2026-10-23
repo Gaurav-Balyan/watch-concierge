@@ -400,7 +400,6 @@ def test_a_waking_tv_waits_for_the_screen_then_settles():
 
 
 def test_a_fixed_wait_records_when_the_app_came_to_the_front():
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # noqa: F401
     from test_tracing import MEMORY, by_name
     MEMORY.clear()
     state = {"app": "home"}

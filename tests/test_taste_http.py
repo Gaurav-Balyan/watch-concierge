@@ -14,7 +14,6 @@ Run:  python tests/test_taste_http.py        (or: pytest tests)
 import asyncio
 import json
 import sys
-import time
 import uuid
 from pathlib import Path
 

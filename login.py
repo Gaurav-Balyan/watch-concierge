@@ -155,13 +155,12 @@ class RefreshingAuth(httpx2.Auth):
 
     def __init__(self, fetch, margin: float = 30, clock=time.time):
         self.fetch, self.margin, self.clock = fetch, margin, clock
-        self.token, self.expires_at, self.fetches = None, 0.0, 0
+        self.token, self.expires_at = None, 0.0
 
     def current(self, force: bool = False) -> str:
         if force or self.token is None or self.clock() >= self.expires_at - self.margin:
             self.token = self.fetch()
             self.expires_at = float(_claims(self.token).get("exp", 0))
-            self.fetches += 1
         return self.token
 
     def auth_flow(self, request):
