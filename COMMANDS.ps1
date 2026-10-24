@@ -30,7 +30,9 @@ python -m common.login --logout            # then python -m common.login again a
 # -----------------------------------------------------------------------------------------------------
 python -m concierge.graph "play The Friend 2025"                         # PLAY: code workflow, 0 model calls
 python -m concierge.graph "play The Friend 2025 on prime"                # a named service is used (or it says where the title is)
-python -m concierge.graph "play Game Changer"                            # several matches -> it asks which one
+python -m concierge.graph "play Game Changer"                            # several EXACT matches (2021, 2025) -> it asks which
+python -m concierge.graph "can you play lupin?"                          # polite is fine (0 calls); one exact title among partial
+                                                                         #   matches -> plays it and says what else was found
 python -m concierge.graph "play tum hi ho by arijit singh"               # SONG: YouTube, 0 model calls
 python -m concierge.graph "play kesariya on youtube"                     # songs need "youtube"/"yt"/"song" or "by <artist>"
 python -m concierge.graph "is the tv on?"                                # STATUS: 0 model calls

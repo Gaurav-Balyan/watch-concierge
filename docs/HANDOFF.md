@@ -35,6 +35,11 @@ and COMMANDS.ps1.
 DECIDED 2026-10-24: single agent and routed.py are baselines only (moved to baselines/); the engine they used
 is concierge/engine.py. Numbers: graph 45/45 at 0.5 calls/run, single 34/42 at 2.3, team 39/42 at 3.7.
 
+## PLAY policy and router (2026-10-24)
+- Router strips polite wrappers before the rules ("can you play lupin?" = 0 model calls).
+- One EXACT title match among partial ones is played (the answer names the others); several exact matches ask.
+- 160 tests.
+
 ## Restructure (2026-10-24): where things moved
 | Before | Now |
 |---|---|

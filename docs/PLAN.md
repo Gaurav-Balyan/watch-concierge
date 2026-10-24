@@ -552,6 +552,14 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   run, prompts checked byte-identical. Caught on the way: a blanket rename had changed the Supervisor's prompt
   ("Catalog agent" -> "Catalog engine"); restored, and the prompt comparison is now part of the check.
 
+- LIVE (2026-10-24): "can you play lupin?" -> 1 router-MODEL call (the rules need the request to START with
+  play/watch), then 2 matches -> asked. Two changes, decided with Gaurav: (1) router strips polite wrappers
+  ("can you / please / i want to ... for me / thanks") before the rules: 0 calls; (2) PLAY policy: if exactly
+  ONE result has the requested title (case/punctuation ignored, nothing fuzzier) among partial matches, play it
+  and say what else was found; several EXACT matches (Game Changer 2021 + 2025) still ask, exact ones listed
+  first. +2 fixtures (Lupin, LUPIN THE 3rd vs. CAT'S EYE), +11 routing tests; 4 mutations caught. 160 tests.
+  Caught by a test: the "play X by Y" song rule still read the unstripped text (fixed).
+
 ## Phase 5: NOT STARTED
 Decided 2026-10-23: NO approval step before device actions (Gaurav). Promptfoo: later, not now.
 

@@ -11,12 +11,16 @@ GAME_CHANGER_2025_PRIME = "amzn1.dv.gti.5dc381a7-270a-4b0b-b5d1-e7a50f47345f"
 GAME_CHANGER_2021_NETFLIX = "81048780"
 DUAL_NETFLIX = "70000001"
 DUAL_PRIME = "amzn1.dv.gti.11111111-2222-3333-4444-555555555555"
+LUPIN_NETFLIX = "80994082"                  # an EXACT title match for "lupin" ...
+LUPIN_3RD_PRIME = "amzn1.dv.gti.22222222-3333-4444-5555-666666666666"   # ... and one that only contains the word
 
 CATALOG = [
     ("The Friend", "2025", {"netflix": THE_FRIEND_NETFLIX}),
     ("Game Changer", "2025", {"prime": GAME_CHANGER_2025_PRIME}),
     ("Game Changer", "2021", {"netflix": GAME_CHANGER_2021_NETFLIX}),
     ("Dual Title", "2020", {"netflix": DUAL_NETFLIX, "prime": DUAL_PRIME}),
+    ("Lupin", "2021", {"netflix": LUPIN_NETFLIX}),
+    ("LUPIN THE 3rd vs. CAT'S EYE", "2023", {"prime": LUPIN_3RD_PRIME}),
 ]
 
 

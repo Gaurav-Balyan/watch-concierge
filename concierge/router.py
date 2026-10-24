@@ -46,6 +46,16 @@ _SUGGEST = re.compile(r"\b(suggest|recommend|recommendation|what should (i|we) w
 _TASTE = re.compile(r"^\s*(i|we)\s+(really\s+)?(like|love|hate|dislike|enjoy|adore|can'?t stand|don'?t (like|enjoy))\b|"
                     r"\bforget that i\b|\b(share|stop sharing) my taste\b|\bmy taste\b", re.I)
 _PLAY = re.compile(r"^\s*(play|watch|open|put on|start|stream)\s+(?P<rest>.+?)\s*[.!?]*\s*$", re.I)
+# Seen live (2026-10-24): "can you play lupin?" missed the PLAY rule (it starts with "can you"), so the router
+# MODEL was asked (1 call, ~0.5 s). Polite wrappers are stripped first, so everyday phrasing stays at 0 calls.
+_POLITE_PREFIX = re.compile(r"^\s*(?:(?:hey|hi|ok|okay)[,!]?\s+)?(?:(?:can|could|would|will) you(?:\s+please)?\s+|"
+                            r"please\s+|pls\s+|kindly\s+|i(?:'d| would)? (?:want|like) to\s+|let'?s\s+)+", re.I)
+_POLITE_SUFFIX = re.compile(r"(?:[,\s]+(?:please|pls|for me|now|thanks|thank you))+\s*[.!?]*\s*$", re.I)
+
+
+def strip_polite(text: str) -> str:
+    """'can you please play lupin for me?' -> 'play lupin'. Only the wrapper goes; the request stays."""
+    return _POLITE_SUFFIX.sub("", _POLITE_PREFIX.sub("", text)).strip()
 _SERVICE = re.compile(r"\s+on\s+(?P<service>netflix|prime(?: video)?|amazon prime)\s*$", re.I)
 _YEAR = re.compile(r"\s*\(?\b(?P<year>(19|20)\d{2})\b\)?\s*$")
 _KIND_WORDS = re.compile(r"\s+(the\s+)?(movie|film|series|tv series|show|tv show)\s*$", re.I)
@@ -77,10 +87,11 @@ def song_query(request: str) -> str:
 def by_rules(request: str) -> Route | None:
     """A route the rules are SURE of, or None."""
     text = " ".join(request.split())
-    if _STATUS.search(text) and not _PLAY.match(text):
+    core = strip_polite(text)                 # the request without "can you ... please"
+    if _STATUS.search(text) and not _PLAY.match(core):
         return Route("STATUS", "asks about the TV's state", "rule")
-    if _SONG.search(text):
-        q = song_query(text)
+    if _SONG.search(core):
+        q = song_query(core)
         return Route("SONG", "mentions YouTube / a song / 'play X by Y'", "rule", {"query": q}) if len(q) >= 2 else None
     if _TASTE.search(text) and not _SUGGEST.search(text):
         return Route("TASTE", "states or asks about the person's own taste", "rule")
@@ -88,7 +99,7 @@ def by_rules(request: str) -> Route | None:
         # "I like comedy, can you suggest ..." = save the preference FIRST, then suggest.
         return Route("SUGGEST", "asks for suggestions / several people", "rule",
                      {"also_taste": bool(_TASTE.search(text))})
-    m = _PLAY.match(text)
+    m = _PLAY.match(core)
     if m:
         params = parse_play(m.group("rest"))
         if params["title"].lower() in _VAGUE or len(params["title"]) < 2:

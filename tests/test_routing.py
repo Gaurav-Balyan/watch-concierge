@@ -72,6 +72,12 @@ ROUTING_TABLE = [
     ("share my taste with the household", "TASTE", {}),
     ("me and Mishika want to watch something tonight", "SUGGEST", {"also_taste": False}),
     ("I like comedy, can you suggest a few titles", "SUGGEST", {"also_taste": True}),
+    # polite wrappers (seen live: "can you play lupin?" cost a router-model call)
+    ("can you play lupin?", "PLAY", {"title": "lupin"}),
+    ("could you please put on The Friend 2025 for me", "PLAY", {"title": "The Friend", "year": "2025"}),
+    ("please play Dual Title 2020 on prime, thanks", "PLAY", {"title": "Dual Title", "year": "2020", "service": "prime"}),
+    ("hey, can you play tum hi ho by arijit singh please", "SONG", {"query": "tum hi ho by arijit singh"}),
+    ("i want to watch Game Changer", "PLAY", {"title": "Game Changer"}),
 ]
 
 
@@ -162,6 +168,45 @@ def test_play_one_match_plays_it():
     assert calls(trace, "search_title")[0]["args"] == {"title": "The Friend", "year": "2025"}
     assert calls(trace, "play_title")[0]["args"]["content_id"] == FRIEND           # by code, not a model
     assert "simulation" in answer and "playing" not in answer.lower()
+
+
+def test_a_polite_request_costs_no_model_call():
+    # NoModel raises if anything calls a model: the rules must place it, as for "play lupin".
+    _, trace = run("can you please play The Friend 2025 for me?")
+    assert trace[0]["args"]["route"] == "PLAY" and trace[0]["args"]["source"] == "rule"
+    assert calls(trace, "play_title")[0]["args"]["content_id"] == FRIEND
+
+
+def test_polite_wrapping_never_changes_the_route():
+    for plain in ("play something good", "play lupin", "is the tv on?", "play tum hi ho by arijit singh"):
+        polite = f"hey, can you please {plain.rstrip('?')} for me?"
+        assert router.by_rules(polite) == router.by_rules(plain), (polite, plain)
+
+
+def test_one_exact_title_among_partial_matches_is_played():
+    # Seen live: "lupin" found "Lupin (2021)" and "LUPIN THE 3rd vs. CAT'S EYE (2023)". Exactly one is the
+    # title asked for: play it, and say what else was found.
+    from evals.fixtures import LUPIN_NETFLIX
+    answer, trace = run("play lupin")
+    p = calls(trace, "play_title")[0]["args"]
+    assert (p["service"], p["content_id"]) == ("netflix", LUPIN_NETFLIX)
+    assert "Lupin (2021)" in answer and "also found" in answer and "CAT'S EYE" in answer
+
+
+def test_exact_match_ignores_case_and_punctuation_only():
+    from concierge.workflows import same_title
+    assert same_title("LUPIN", "lupin!") and same_title("Lupin ", "lupin")
+    assert not same_title("LUPIN THE 3rd", "lupin") and not same_title("The Friend", "Friend")
+
+
+def test_several_exact_matches_still_ask():
+    answer, trace = run("play Game Changer")             # 2021 and 2025: both exactly "Game Changer"
+    assert not calls(trace, "play_title") and "Which one" in answer
+
+
+def test_the_note_is_not_added_to_a_failure():
+    answer, _ = run("play lupin", {**FIXED, "device": "evals/srv_device_unreachable.py"})
+    assert "didn't respond" in answer and "also found" not in answer
 
 
 def test_no_year_is_invented():
