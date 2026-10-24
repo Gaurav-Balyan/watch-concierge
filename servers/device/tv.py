@@ -131,6 +131,9 @@ async def pause(name: str, seconds: float, ready=None):
             await asyncio.sleep(min(0.5, seconds - elapsed))
         if ready is not None:
             tracing.set_attrs(s, {"tv.ready_after_s": None if seen is None else round(seen, 1)})
+    # Also in logs/device_mcp.log (device-mcp sends prints there): tune the waits without Jaeger.
+    print(f"  wait {name}: {seconds}s fixed" + ("" if ready is None else
+          f", app in front after {seen:.1f}s" if seen is not None else ", app NOT seen in front"))
 
 
 async def connect_with_wake() -> WebOsClient:

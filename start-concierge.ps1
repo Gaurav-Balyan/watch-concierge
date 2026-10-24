@@ -6,7 +6,7 @@
 # 2. waits until Keycloak answers
 # 3. opens one PowerShell window per MCP server (catalog, device, taste)
 # 4. shows who is logged in
-# Stop: close the three server windows, then  docker stop keycloak household-db
+# Stop: close the three server windows, then  docker stop keycloak household-db jaeger
 
 # "Continue", not "Stop": in Windows PowerShell 5.1, a native command (docker) writing to stderr
 # would otherwise abort the script. We check $LASTEXITCODE ourselves instead.
@@ -29,6 +29,13 @@ foreach ($name in "keycloak", "household-db") {
 }
 Write-Host "Starting containers keycloak and household-db..."
 docker start keycloak household-db | Out-Null
+# Jaeger (traces) is optional: start it when it exists, otherwise say how to create it.
+if ($existing -contains "jaeger") {
+    docker start jaeger | Out-Null
+    Write-Host "Started jaeger: traces at http://localhost:16686"
+} else {
+    Write-Host "No 'jaeger' container (optional). To see traces, create it once (SETUP.md 1.5), or set TRACING=print in .env." -ForegroundColor Yellow
+}
 
 # ---- 2. Wait for Keycloak (up to 90 s)
 $url = "http://localhost:8080/realms/household/.well-known/openid-configuration"

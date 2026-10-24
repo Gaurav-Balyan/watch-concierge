@@ -136,8 +136,21 @@ async def tv_status(params: dict, trace: list | None) -> str:
         text, is_error = await engine.call_traced(box, "tv_status", {}, trace, "workflow:status")
     if is_error:
         return f"I couldn't check the TV: {' '.join(text.split())[:200]}"
-    s = json.loads(text)
+    return status_answer(json.loads(text))
+
+
+def status_answer(s: dict) -> str:
+    """The sentence for a tv_status result (a template: it says only what the result says)."""
     if not s.get("reachable"):
-        return "The TV isn't answering: it may be off or in deep standby. Playing a title wakes it automatically."
+        where = f" at {s['tv_ip']}" if s.get("tv_ip") else ""
+        if s.get("network_answers") is False:
+            why = (f"nothing answers{where}. Either the TV is off (or in deep standby), or this PC is not on the "
+                   "TV's network (see README: 'TV not reachable?').")
+        elif s.get("network_answers"):
+            why = f"it answers{where} but refused the remote-control connection ({s.get('error')})."
+        else:
+            why = "it may be off or in deep standby."
+        return f"The TV isn't answering: {why} Playing a title wakes it from standby." + (
+            f" (Error: {s['error']})" if s.get("error") and s.get("network_answers") is not True else "")
     app = s.get("foreground_app")
     return f"Yes, the TV is on (power state: {s.get('power_state')})" + (f", showing {app}." if app else ".")

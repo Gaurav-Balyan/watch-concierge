@@ -41,6 +41,7 @@ Run it on its own (it just waits for a client), or test with the probe:
 """
 import asyncio
 import contextlib
+import os
 import re
 import sys
 from typing import Literal
@@ -124,17 +125,28 @@ async def tv_status() -> dict:
 
     Returns reachable (bool), power_state, foreground_app and dry_run_mode.
     reachable=False means the TV did not answer (it may be off or in deep standby);
-    that is normal information, not an error.
+    that is normal information, not an error. Then `error` says what failed, and
+    `network_answers` whether anything answers on the TV's ports at all.
     """
     with stdout_to_log():
         try:
             c = await asyncio.wait_for(tv.connect(), 8)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # Seen live (2026-10-23): "isn't answering" while the TV was ON; the PC was on another Wi-Fi.
+            # Say WHAT failed, and whether anything answers on the network, so that shows up at once.
+            ip = os.environ.get("TV_IP", "")
+            answers = await tv.answers(ip, timeout=0.5) if ip else None
             return {
                 "reachable": False,
                 "dry_run_mode": config.DEVICE_DRY_RUN,
-                "note": "No answer from the TV. It may be off or in deep standby. "
-                        "play_title wakes it automatically.",
+                "tv_ip": ip,
+                "error": (f"{type(e).__name__}: {e}".rstrip(": "))[:160],
+                "network_answers": answers,
+                "note": ("Nothing answers at that address: the TV is off, or this PC is not on the TV's network. "
+                         if answers is False else
+                         "The TV answers on the network but refused the remote-control connection. "
+                         if answers else "No answer from the TV. ") +
+                        "play_title wakes it automatically from standby.",
             }
         try:
             power = await c.get_power_state()

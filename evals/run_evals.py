@@ -8,6 +8,7 @@ Run the eval cases against the agent, several times each, and report.
     python evals/run_evals.py --agent team --label team    # Phase 3: the Supervisor + specialists
     python evals/run_evals.py --agent routed --label routed  # Phase 3, Step 7: router + code workflows
     python evals/run_evals.py --agent graph --label graph    # Phase 4: the same routes as a LangGraph graph
+    python evals/run_evals.py --agent team --only 16 --guard off --label inj_noguard   # Phase 5: the model alone
 
 SINGLE AGENT vs TEAM (Phase 3)
     --agent single (default) runs single_agent.run_agent; --agent team runs multi_agent.run_team with the
@@ -106,6 +107,7 @@ def fingerprint() -> dict:
         prompt += "".join(p.read_text(encoding="utf-8") for p in sorted((config.BASE_DIR / "concierge" / "skills").glob("*.md")))
     return {
         "agent": AGENT_KIND,
+        **({} if agent.PROVENANCE_GUARD else {"guard": "off"}),   # Phase 5: only shown when switched off
         "model": agent.MODEL,
         "system_prompt": _sha(prompt),
         "tool_servers": _sha(tools_src),
@@ -360,9 +362,14 @@ def main(argv=None) -> int:
                    help="single = agent.py (default); team = multi_agent.py (Supervisor + Catalog agent); "
                         "routed = routed.py (router + code workflows, the team as fallback); "
                         "graph = graph.py (the routed design as a LangGraph graph)")
+    p.add_argument("--guard", choices=["on", "off"], default="on",
+                   help="Phase 5: off = no provenance guard, to measure what the MODEL does with an injection")
     args = p.parse_args(argv)
     global AGENT_KIND
     AGENT_KIND = args.agent
+    agent.PROVENANCE_GUARD = args.guard == "on"
+    if not agent.PROVENANCE_GUARD:
+        print("WARNING: provenance guard OFF (evals only): an injected id CAN reach the fake TV.\n")
 
     if args.compare:
         a, b = (json.loads(open(f, encoding="utf-8").read()) for f in args.compare)

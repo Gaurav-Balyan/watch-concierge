@@ -135,11 +135,13 @@ def test_a_song_goes_to_youtube():
 
 
 def test_a_youtube_link_is_not_a_video_id():
-    _, trace, _ = run_offline([
-        reply(calls=[("play_title", '{"service": "youtube", "content_id": "https://youtu.be/%s"}' % SONG_ID)]),
-        reply(text="That was not a video id."),
-    ], "play this")
-    assert trace[0]["is_error"] and "INVALID_INPUT" in trace[0]["result"], trace[0]
+    # device-mcp's OWN check, called by code. (Since Phase 5 a MODEL never gets this far with a link: the
+    # agent loop blocks any id no search returned. test_injection.py tests that.)
+    async def play_link():
+        async with agent.McpToolbox(FAKE_SERVERS) as box:
+            return await box.call("play_title", {"service": "youtube", "content_id": "https://youtu.be/%s" % SONG_ID})
+    text, is_error = asyncio.run(play_link())
+    assert is_error and "INVALID_INPUT" in text, text
 
 
 def test_eval_runner_scores_a_team_run():

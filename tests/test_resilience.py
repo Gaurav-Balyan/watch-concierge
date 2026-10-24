@@ -411,6 +411,27 @@ def test_a_waking_tv_waits_for_the_screen_then_settles():
     assert not isinstance(result, Exception) and 2.8 <= took < 5, took    # ~0.6 wake + ~2.5 check + 0.5 settle
 
 
+def _status(listening):
+    from concierge.workflows import status_answer
+    from servers.device import server as device_server
+    with fake_tv(listening=listening, webos=False):
+        with contextlib.redirect_stdout(io.StringIO()):
+            s = asyncio.run(device_server.tv_status())
+    return s, status_answer(s)
+
+
+def test_tv_status_off_or_other_network_says_nothing_answers():
+    s, answer = _status(listening=False)
+    assert s["reachable"] is False and s["network_answers"] is False and "no route to host" in s["error"]
+    assert "nothing answers at 127.0.0.1" in answer and "not on the TV's network" in answer, answer
+
+
+def test_tv_status_on_the_network_but_refusing_says_so():
+    s, answer = _status(listening=True)
+    assert s["network_answers"] is True
+    assert "answers at 127.0.0.1 but refused" in answer and "no route to host" in answer, answer
+
+
 def test_a_fixed_wait_records_when_the_app_came_to_the_front():
     from test_tracing import MEMORY, by_name
     MEMORY.clear()
@@ -418,8 +439,13 @@ def test_a_fixed_wait_records_when_the_app_came_to_the_front():
     loop = asyncio.new_event_loop()
     loop.call_later(0.6, lambda: state.update(app="netflix"))
     start = time.monotonic()
-    loop.run_until_complete(tv.pause("netflix picker", 1.5, ready=lambda: state["app"] == "netflix"))
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        loop.run_until_complete(tv.pause("netflix picker", 1.5, ready=lambda: state["app"] == "netflix"))
     loop.close()
+    line = out.getvalue()                                                 # the log line (polled every 0.5 s)
+    assert "wait netflix picker: 1.5s fixed, app in front after " in line, line
+    assert 0.5 <= float(line.split("after ")[1].rstrip("s\n")) <= 1.2, line
     took = time.monotonic() - start
     span = by_name(list(MEMORY.get_finished_spans()), "tv wait netflix picker")[0]
     assert took >= 1.5                                                    # the full fixed wait still happens

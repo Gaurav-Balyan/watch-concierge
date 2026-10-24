@@ -46,7 +46,9 @@ def run(a: agent.Agent, toolbox: FakeToolbox, script):
     agent.AsyncGroq = lambda: FakeGroq(script)
     trace = []
     try:
-        answer = asyncio.run(a.loop(toolbox, "play The Friend", trace))
+        # Phase 5: the fake toolbox has no search, so open the request's searched ids as if one had returned it.
+        with agent.searched_ids_scope({("netflix", "81234567")}):
+            answer = asyncio.run(a.loop(toolbox, "play The Friend", trace))
     finally:
         agent.AsyncGroq = saved
     return answer, trace

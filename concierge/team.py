@@ -33,7 +33,8 @@ HOW THE AGENTS TALK ("agent as a tool")
     token) and returns the Catalog agent's final answer as the tool result. The two models
     never see each other's conversation: only the question goes down and only the answer
     comes back. That answer is text written by a model, so the Supervisor trusts it only as
-    much as a tool result (Phase 5: check that a content_id really came from search_title).
+    much as a tool result. Phase 5: the id it plays must have come from a real search (engine.SEARCHED_IDS),
+    and the Taste agent gets the PERSON's words from code, never the Supervisor's (ask_taste_tool).
 
 Today this team is the graph's FALLBACK node (concierge.graph). It can still be run on its own:
     python -m concierge.team "play The Friend 2025"
@@ -91,11 +92,13 @@ def catalog_agent() -> engine.Agent:
 
 
 def ask_agent_tool(name: str, owner: str, make_agent, description: str, example: str,
-                   trace: list | None, read_only: bool) -> engine.LocalTool:
-    """A bridge from the Supervisor to a specialist: the tool's function runs a whole agent."""
+                   trace: list | None, read_only: bool, words: str | None = None) -> engine.LocalTool:
+    """A bridge from the Supervisor to a specialist: the tool's function runs a whole agent.
+    words: Phase 5. If given, the specialist gets THESE words (set by code) and the model sends nothing:
+    the tool has no `question` argument, and anything the model sends anyway is ignored."""
 
     async def ask(args: dict) -> str:
-        question = str(args.get("question") or "").strip()
+        question = (words if words is not None else str(args.get("question") or "")).strip()
         if not question:
             raise ValueError("question is empty")
         print(f"\n    >>> handing over to the {owner}: {question!r}")
@@ -105,12 +108,11 @@ def ask_agent_tool(name: str, owner: str, make_agent, description: str, example:
         print(f"    <<< back to the Supervisor with: {' '.join(answer.split())[:300]}")
         return answer
 
-    return engine.LocalTool(
-        name=name, description=description,
-        parameters={"type": "object",
-                    "properties": {"question": {"type": "string", "description": example}},
-                    "required": ["question"]},
-        fn=ask, owner=owner, read_only=read_only)
+    parameters = ({"type": "object", "properties": {}} if words is not None else
+                  {"type": "object", "properties": {"question": {"type": "string", "description": example}},
+                   "required": ["question"]})
+    return engine.LocalTool(name=name, description=description, parameters=parameters,
+                            fn=ask, owner=owner, read_only=read_only)
 
 
 def ask_catalog_tool(trace: list | None) -> engine.LocalTool:
@@ -130,14 +132,19 @@ def ask_consensus_tool(trace: list | None) -> engine.LocalTool:
         "e.g. 'Watching: gaurav, mishika. Request: something we would both like'", trace, read_only=True)
 
 
-def ask_taste_tool(trace: list | None) -> engine.LocalTool:
+def ask_taste_tool(trace: list | None, request: str | None) -> engine.LocalTool:
     # read_only=False: it can change saved preferences, so the loop will not repeat an identical
     # successful call (same rule as any acting tool).
+    # Phase 5: the Taste agent CHANGES stored data (likes, dislikes, household sharing), so what it is asked
+    # must not be text a model wrote: a planted line in a search result could become "share my taste with
+    # the household". CODE passes the person's own request, word for word (as the graph's taste node does).
+    # request None (only --tools and prompt checks build a Supervisor without one): calling it fails.
     return ask_agent_tool(
         "ask_taste_agent", "taste agent", lambda: skill_agents.taste_agent(),
-        "Ask the Taste agent to save, forget or read the logged-in person's likes and dislikes. "
-        "Pass the person's own words unchanged.",
-        "e.g. 'I don't like horror, and I love Christopher Nolan films'", trace, read_only=False)
+        "Ask the Taste agent to save, forget or read the logged-in person's likes and dislikes, or to turn "
+        "household sharing on or off. It receives the person's own request word for word, from code: "
+        "you send nothing.",
+        "", trace, read_only=False, words=request or "")
 
 
 SUPERVISOR_CONSENSUS_LINE = (
@@ -158,13 +165,14 @@ SUPERVISOR_YOUTUBE_LINE = (
 
 SUPERVISOR_TASTE_LINE = (
     " For anything about the person's likes, dislikes or preferences (saving, forgetting or reading "
-    "them), call ask_taste_agent and pass the person's own words unchanged. You cannot read or change "
+    "them), call ask_taste_agent (it receives the person's own words from code). You cannot read or change "
     "preferences yourself. Report only what the Taste agent says it did."
 )
 
 
-def supervisor(trace: list | None = None) -> engine.Agent:
-    """Only the device server, plus one bridge tool per specialist."""
+def supervisor(trace: list | None = None, request: str | None = None) -> engine.Agent:
+    """Only the device server, plus one bridge tool per specialist. `request`: the person's words, which
+    code hands to the Taste agent (Phase 5)."""
     servers = {"device": engine.SERVERS["device"]}
     tools = [ask_catalog_tool(trace)]
     system = SUPERVISOR_SYSTEM + SUPERVISOR_YOUTUBE_LINE
@@ -175,14 +183,14 @@ def supervisor(trace: list | None = None) -> engine.Agent:
         system += (f" The logged-in person's username is '{who}': 'me', 'I' and 'we' include {who}. "
                    "Always use usernames, never 'me' or 'user'.")
     if skill_agents.has_taste():
-        tools += [ask_taste_tool(trace), ask_consensus_tool(trace)]
+        tools += [ask_taste_tool(trace, request), ask_consensus_tool(trace)]
         system += SUPERVISOR_TASTE_LINE + SUPERVISOR_CONSENSUS_LINE
     return engine.Agent("supervisor", system, servers,
                        after_tool=recorder.record_watch_after_play, local_tools=tools)
 
 
 async def run_team(request: str, trace: list | None = None) -> str:
-    return await supervisor(trace).run(request, trace)
+    return await supervisor(trace, request).run(request, trace)
 
 
 async def show_tools():

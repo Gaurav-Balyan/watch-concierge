@@ -13,6 +13,7 @@ Run:  python tests/test_routing.py        (or: pytest tests)
 import asyncio
 import contextlib
 import io
+import json
 import sys
 import types
 from pathlib import Path
@@ -249,6 +250,15 @@ def test_song_plays_the_first_video():
     answer, trace = run("play tum hi ho by arijit singh")
     p = calls(trace, "play_title")[0]["args"]
     assert (p["service"], p["content_id"]) == ("youtube", SONG) and "simulation" in answer
+
+
+def test_tv_status_says_why_the_tv_is_not_reachable():
+    # Seen live: "isn't answering" while the TV was on (the PC was on another Wi-Fi). The answer now carries the
+    # reason. (On a PC with TV_IP set, the fake server also probes that address: either wording is fine.)
+    answer, trace = run("is the tv on?", {**FIXED, "device": "evals/srv_device_unreachable.py"})
+    s = json.loads(calls(trace, "tv_status")[0]["result"])
+    assert s["reachable"] is False and "no route to host" in s["error"], s
+    assert "isn't answering" in answer and "no route to host" in answer, answer
 
 
 def test_tv_status_uses_only_tv_status():

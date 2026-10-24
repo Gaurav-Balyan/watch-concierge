@@ -294,6 +294,14 @@ often > 30 s). Expect no 401 and no "Login problem". Set it back to **5 minutes*
 When done: set `DEVICE_DRY_RUN` the way you want it day to day, and tell the assistant the numbers from 3 and 4
 (the `tv.ready_after_s` values): they decide whether the fixed waits can be shortened.
 
+**Reading the wait timings without Jaeger:** every TV wait is also a line in the device log, e.g.
+`wait netflix picker: 25s fixed, app in front after 4.0s`. After a few real plays:
+```powershell
+Select-String -Path logs\device_mcp.log -Pattern "  wait " | Select-Object -Last 20
+```
+A fixed wait much longer than "app in front after" is a candidate to shorten in `.env` (keep a margin: the app
+being in front does not mean its picker is drawn yet).
+
 ## 5. Troubleshooting
 | You see | Meaning and fix |
 |---|---|
