@@ -21,9 +21,9 @@ import tempfile
 import time
 import types
 
-import agent
-import config
-import graph
+from concierge import engine as agent
+from common import config
+from concierge import graph
 from eval_servers import EVAL_STATE
 
 ROOT = _paths.ROOT

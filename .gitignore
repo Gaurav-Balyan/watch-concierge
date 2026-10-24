@@ -10,3 +10,5 @@ device_mcp.log
 evals/results/
 # Phase 2: your saved login (refresh token). Never commit.
 .login.json
+# Phase 4: checkpoints, idempotency records, catalog cache + breaker (SQLite)
+.state/

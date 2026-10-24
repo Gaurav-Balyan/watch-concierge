@@ -19,7 +19,7 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from auth import AuthError, TokenVerifier
+from common.auth import AuthError, TokenVerifier
 
 try:
     import pytest
@@ -158,7 +158,7 @@ def keycloak_token(username: str, scope: str) -> str:
     """A real token from Keycloak, through the PKCE login (Step 6 turned the password grant off)."""
     import urllib.error
     import kc_browser
-    import login
+    from common import login
     try:
         return kc_browser.token(username, scope)
     except (urllib.error.URLError, ConnectionError) as e:

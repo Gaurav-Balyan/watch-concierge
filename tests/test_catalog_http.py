@@ -2,7 +2,7 @@
 catalog-mcp over HTTP refuses every request without a valid catalog-mcp token
 (Phase 2, Step 5).
 
-Starts `python catalog_mcp.py --http` itself, then knocks on the door with:
+Starts `python -m servers.catalog.server --http` itself, then knocks on the door with:
 no token, garbage, a token for ANOTHER server (device-mcp), and a correct one.
 Only the correct one may get in. The server's own log line says WHY each was refused.
 
@@ -30,7 +30,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-import config
+from common import config
 from test_auth import Skip, keycloak_token
 
 URL = f"http://127.0.0.1:{config.CATALOG_MCP_PORT}/mcp"
@@ -38,8 +38,9 @@ SERVER_LOG = ROOT / "logs" / "test_catalog_http.log"
 
 
 @contextmanager
-def http_server(script: str, port: int, log_path: Path, extra_env: dict | None = None):
-    """Start `python <script> --http` on 127.0.0.1:<port>, wait until it listens, stop it after."""
+def http_server(module: str, port: int, log_path: Path, extra_env: dict | None = None):
+    """Start `python -m <module> --http` on 127.0.0.1:<port>, wait until it listens, stop it after."""
+    script = module                       # for the messages below
     keycloak_token("gaurav", "openid")   # skips everything if Keycloak is down
     with socket.socket() as s:
         if s.connect_ex(("127.0.0.1", port)) == 0:
@@ -50,7 +51,7 @@ def http_server(script: str, port: int, log_path: Path, extra_env: dict | None =
     env["PYTHONIOENCODING"] = "utf-8"
     env.update(extra_env or {})
     log = open(log_path, "w", encoding="utf-8")
-    proc = subprocess.Popen([sys.executable, str(ROOT / script), "--http"],
+    proc = subprocess.Popen([sys.executable, "-m", module, "--http"],
                             cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
     try:
         for _ in range(100):                      # wait up to ~10 s for the port to open
@@ -70,7 +71,7 @@ def http_server(script: str, port: int, log_path: Path, extra_env: dict | None =
 
 
 def catalog_server():
-    return http_server("catalog_mcp.py", config.CATALOG_MCP_PORT, SERVER_LOG)
+    return http_server("servers.catalog.server", config.CATALOG_MCP_PORT, SERVER_LOG)
 
 
 def post_initialize(token: str | None, url: str = URL):

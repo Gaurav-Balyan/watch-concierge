@@ -24,7 +24,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-import config
+from common import config
 from test_auth import Skip, keycloak_token
 from test_catalog_http import http_server, last_auth_log_line, post_initialize
 
@@ -34,7 +34,7 @@ SERVER_LOG = config.BASE_DIR / "logs" / "test_device_http.log"
 
 def device_server():
     # DEVICE_DRY_RUN=1 here wins over your .env: these tests must never drive the real TV.
-    return http_server("device_mcp.py", config.DEVICE_MCP_PORT, SERVER_LOG,
+    return http_server("servers.device.server", config.DEVICE_MCP_PORT, SERVER_LOG,
                        {"DEVICE_DRY_RUN": "1", "TV_IP": os.environ.get("TV_IP") or "192.0.2.1",
                         "TV_MAC": os.environ.get("TV_MAC") or "AA:BB:CC:DD:EE:FF"})
 

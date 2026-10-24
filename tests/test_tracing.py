@@ -21,10 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-import agent
-import config
-import multi_agent
-import tracing
+from concierge import engine as agent
+from common import config
+from concierge import team as multi_agent
+from common import tracing
 from test_agent_recovery import reply
 from test_auth import Skip
 from test_multi_agent import FAKE_SERVERS, HAPPY, TASTE_URL, RecordingGroq, temp_login, token_spy

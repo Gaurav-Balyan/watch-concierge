@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 from groq import BadRequestError
 
-import agent
+from concierge import engine as agent
+from baselines import single_agent
 
 REAL_400 = {"error": {  # the body Groq returned in the live run, copied as is
     "message": "Tool call validation failed: tool call validation failed: parameters for tool search_title "
@@ -59,7 +60,7 @@ def run_with(script):
     agent.SERVERS = {}          # no MCP servers: the unknown-tool path answers instead
     trace = []
     try:
-        answer = asyncio.run(agent.run_agent("The Grand Seduction", trace=trace))
+        answer = asyncio.run(single_agent.run_agent("The Grand Seduction", trace=trace))
     finally:
         agent.AsyncGroq, agent.SERVERS = saved
     return answer, trace, fake

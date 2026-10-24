@@ -20,11 +20,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import agent
-import config
-import router
-import routed
-import skills
+from concierge import engine as agent
+from common import config
+from concierge import router
+from baselines import routed
+from concierge import skills
 from test_agent_recovery import reply
 from test_multi_agent import RecordingGroq
 

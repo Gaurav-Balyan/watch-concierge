@@ -27,8 +27,9 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-import agent
-import multi_agent
+from concierge import engine as agent
+from concierge import team as multi_agent
+from concierge import skill_agents
 from test_agent_recovery import reply
 from test_auth import Skip, keycloak_token
 from test_multi_agent import FAKE_SERVERS, TASTE_URL, run_offline, temp_login, token_spy
@@ -153,8 +154,8 @@ def test_only_the_consensus_agent_holds_the_permission():
     agent.SERVERS = {**FAKE_SERVERS, "taste": TASTE_URL}
     try:
         with temp_login("gaurav"), household(), token_spy() as requested:
-            taste_offered = asyncio.run(open_(multi_agent.taste_agent()))
-            consensus_offered = asyncio.run(open_(multi_agent.consensus_agent()))
+            taste_offered = asyncio.run(open_(skill_agents.taste_agent()))
+            consensus_offered = asyncio.run(open_(skill_agents.consensus_agent()))
     finally:
         agent.SERVERS = saved
     assert [aud for aud, _ in requested] == ["taste-mcp", "taste-mcp+taste-household-read"], requested
@@ -173,7 +174,7 @@ def test_supervisor_is_told_who_me_is():
     finally:
         agent.SERVERS = saved
     assert "username is 'gaurav'" in system and "never 'me' or 'user'" in system
-    assert "never words like 'me', 'I' or 'user'" in multi_agent.CONSENSUS_SYSTEM
+    assert "never words like 'me', 'I' or 'user'" in skill_agents.CONSENSUS_SYSTEM
     # Seen live: "suggest a few comedies" had no route; the Supervisor answered with 8 titles from memory.
     assert "for one person or several" in system and "NEVER name a title" in system
 

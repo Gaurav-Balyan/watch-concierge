@@ -47,8 +47,8 @@ def _stderr_to_file():
 
 def serve_catalog(mode: str):
     _stderr_to_file()
-    import catalog_mcp
-    import lookup
+    from servers.catalog import server as catalog_mcp
+    from servers.catalog import lookup
     from fixtures import search
 
     if mode == "ok":
@@ -57,7 +57,7 @@ def serve_catalog(mode: str):
         catalog_mcp.youtube.find_videos = find_videos     # no network for YouTube either
     elif mode == "down":
         # Phase 4: the OUTSIDE API is down, but the real cache + retries + circuit breaker run (lookup.py).
-        import config
+        from common import config
         config.STATE_DIR = EVAL_STATE
 
         async def outage(title):
@@ -76,15 +76,15 @@ def serve_catalog(mode: str):
 
 def serve_device(mode: str):
     _stderr_to_file()
-    import logsetup
+    from common import logsetup
     # Keep eval logging out of your real logs/device_mcp.log.
     logsetup.LOG_DIR = Path(tempfile.gettempdir()) / "watch_concierge_eval_logs"
 
-    import config
+    from common import config
     config.STATE_DIR = EVAL_STATE
-    import device_mcp
-    import tv
-    from services import SERVICES
+    from servers.device import server as device_mcp
+    from servers.device import tv
+    from servers.device.services import SERVICES
 
     class FakeTV:
         tv_state = types.SimpleNamespace(current_app_id="netflix")

@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import kc_browser
-import login
-from auth import AuthError, TokenVerifier
+from common import login
+from common.auth import AuthError, TokenVerifier
 from test_auth import GAURAV, MISHIKA, Skip, keycloak_token
 from test_catalog_http import URL, catalog_server, last_auth_log_line
 
@@ -160,14 +160,14 @@ def test_no_login_gives_a_clear_message():
     try:
         login.access_token_for("catalog-mcp")
     except login.LoginError as e:
-        assert "python login.py" in str(e)
+        assert "python -m common.login" in str(e)
         return
     raise AssertionError("got a token with nobody logged in")
 
 
 def test_agent_reaches_catalog_over_http_as_the_logged_in_person():
     need_keycloak()
-    import agent
+    from concierge import engine as agent
     fresh_login("mishika")
 
     async def discover():

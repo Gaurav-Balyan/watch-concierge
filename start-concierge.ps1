@@ -50,20 +50,20 @@ Write-Host "Keycloak is ready."
 
 # ---- 3. One window per server (each activates the conda env itself)
 $servers = @(
-    @{ Title = "catalog-mcp :8001"; Script = "catalog_mcp.py" },
-    @{ Title = "device-mcp :8002";  Script = "device_mcp.py" },
-    @{ Title = "taste-mcp :8003";   Script = "taste_mcp.py" }
+    @{ Title = "catalog-mcp :8001"; Module = "servers.catalog.server" },
+    @{ Title = "device-mcp :8002";  Module = "servers.device.server" },
+    @{ Title = "taste-mcp :8003";   Module = "servers.taste.server" }
 )
 foreach ($s in $servers) {
-    $command = "`$host.UI.RawUI.WindowTitle = '$($s.Title)'; conda activate watch-concierge; python $($s.Script) --http"
+    $command = "`$host.UI.RawUI.WindowTitle = '$($s.Title)'; conda activate watch-concierge; python -m $($s.Module) --http"
     Start-Process powershell -WorkingDirectory $root -ArgumentList "-NoExit", "-Command", $command
     Start-Sleep -Seconds 1
 }
 Write-Host "Opened three server windows. The device window's first line says LIVE or DRY RUN."
 
 # ---- 4. Who is logged in (uses the environment active in THIS window)
-python login.py --status
+python -m common.login --status
 Write-Host ""
-Write-Host "Next (in this window):  python agent.py --tools      then e.g.  python agent.py ""play The Friend 2025"""
-Write-Host "Not logged in?          python login.py"
+Write-Host "Next (in this window):  python -m concierge.graph ""play The Friend 2025""      (all commands: COMMANDS.ps1)"
+Write-Host "Not logged in?          python -m common.login"
 Write-Host "Agent still using stdio? Add the three *_MCP_URL lines to .env (SETUP.md, section 1.3)."

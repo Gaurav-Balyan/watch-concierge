@@ -13,7 +13,7 @@ HARD vs SOFT
   reported as warnings but never fail a run.
 
 Every check is a function  fn(trace, answer) -> (ok: bool, detail: str).
-`trace` is the list of tool calls recorded by agent.run_agent:
+`trace` is the list of tool calls recorded by single_agent.run_agent:
     {"tool", "args", "result", "is_error", "executed"}
 `executed` is False when the agent itself blocked the call (a repeat) and it
 never reached a server. Team runs (Phase 3) add "agent"; nested agents append to the SAME

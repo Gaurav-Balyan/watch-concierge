@@ -4,7 +4,7 @@ The fake catalog used by the evals.
 Fixed data means a case never depends on RapidAPI, never uses your quota, and
 gives the same answer every run. The ids below are what the checks compare against.
 """
-from lookup import Match
+from servers.catalog.lookup import Match
 
 THE_FRIEND_NETFLIX = "82182295"
 GAME_CHANGER_2025_PRIME = "amzn1.dv.gti.5dc381a7-270a-4b0b-b5d1-e7a50f47345f"

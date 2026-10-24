@@ -25,7 +25,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-import config
+from common import config
 from test_auth import GAURAV, MISHIKA, Skip, keycloak_token
 from test_catalog_http import http_server, last_auth_log_line, post_initialize
 
@@ -61,7 +61,7 @@ def reset_test_taste():
 def taste_server():
     need_db()
     reset_test_taste()
-    return http_server("taste_mcp.py", config.TASTE_MCP_PORT, SERVER_LOG, {"TASTE_DB_URL": TEST_DB_URL})
+    return http_server("servers.taste.server", config.TASTE_MCP_PORT, SERVER_LOG, {"TASTE_DB_URL": TEST_DB_URL})
 
 
 async def call(username: str, tool: str, args: dict | None = None, raw: bool = False):
@@ -203,7 +203,7 @@ def test_app_role_cannot_delete_history_or_drop_tables():
 
 # ----------------------------------------------------------------- stdio
 def test_without_a_token_there_is_no_user():
-    import taste_mcp
+    from servers.taste import server as taste_mcp
 
     async def go():
         async with Client(taste_mcp.mcp) as client:      # in-process, no HTTP, no token
@@ -216,9 +216,9 @@ def test_without_a_token_there_is_no_user():
 # ----------------------------------------------------------------- agent
 def test_agent_records_only_real_plays_and_hides_record_watch_from_the_model():
     import tempfile
-    import agent
+    from concierge import engine as agent
     import kc_browser
-    import login
+    from common import login
     login.STATE_FILE = Path(tempfile.mkdtemp()) / ".login.json"   # never your real login
     login.login(open_browser=kc_browser.browser_for("mishika"))
     real, dry = f"Played {RUN}", f"Dry {RUN}"

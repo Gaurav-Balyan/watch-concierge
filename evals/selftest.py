@@ -31,7 +31,7 @@ import types
 import httpx
 import groq
 
-import agent
+from concierge import engine as agent
 import fixtures as fx
 import run_evals
 from cases import CASES_BY_ID
@@ -186,7 +186,7 @@ class ScriptedModel:
 
 
 def install(flags=()):
-    """Make agent.run_agent talk to the scripted model instead of Groq."""
+    """Make single_agent.run_agent talk to the scripted model instead of Groq."""
     model = ScriptedModel(flags)
     agent.AsyncGroq = lambda: B(chat=B(completions=model))
 

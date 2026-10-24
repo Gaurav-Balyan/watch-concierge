@@ -26,10 +26,11 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import agent
-import config
-import login
-import multi_agent
+from concierge import engine as agent
+from common import config
+from common import login
+from concierge import team as multi_agent
+from concierge import recorder, skill_agents
 from test_agent_recovery import reply
 from test_auth import Skip
 
@@ -181,7 +182,7 @@ def test_supervisor_with_taste_has_only_device_and_two_bridges():
         assert set(sup.servers) == {"device"}, sup.servers               # no taste, no catalog server
         assert [t.name for t in sup.local_tools] == ["ask_catalog_agent", "ask_taste_agent", "ask_consensus_agent"]
         assert "ask_taste_agent" in sup.system
-        assert set(multi_agent.taste_agent().servers) == {"taste"}
+        assert set(skill_agents.taste_agent().servers) == {"taste"}
     finally:
         agent.SERVERS = saved
 
@@ -273,7 +274,7 @@ def test_taste_agents_real_token_is_refused_at_device_mcp():
     from test_device_http import URL as DEVICE_URL
     from test_taste_http import taste_server
     specialist_token_is_refused_at_device(
-        multi_agent.taste_agent, {"taste": TASTE_URL, "device": DEVICE_URL},
+        skill_agents.taste_agent, {"taste": TASTE_URL, "device": DEVICE_URL},
         {"get_my_taste", "remember_taste", "forget_taste", "record_watch",          # routes: all server tools,
          "set_household_sharing", "get_household_taste"}, "taste-mcp", taste_server)  # even hidden ones
 
@@ -324,10 +325,10 @@ def test_recorder_writes_history_only_after_a_real_play():
     args = {"service": "netflix", "content_id": FRIEND_ID}
     with temp_login("gaurav"), taste_server(), servers({**FAKE_SERVERS, "taste": TASTE_URL}), \
             token_spy() as requested:
-        asyncio.run(multi_agent.record_watch_after_play(
+        asyncio.run(recorder.record_watch_after_play(
             None, "play_title", {**args, "title": dry_title}, json.dumps({"status": "dry_run"})))
         assert requested == []                                  # a dry run opens no connection at all
-        asyncio.run(multi_agent.record_watch_after_play(
+        asyncio.run(recorder.record_watch_after_play(
             None, "play_title", {**args, "title": real_title}, json.dumps({"status": "requested"})))
         assert [aud for aud, _ in requested] == ["taste-mcp"]
         watched = [h["title"] for h in taste_of("gaurav")["recently_watched"]]

@@ -12,9 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config
-import tv
-from services import netflix, prime
+from common import config
+from servers.device import tv
+from servers.device.services import netflix, prime
 
 
 class FakeTV:

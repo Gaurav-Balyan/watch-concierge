@@ -10,7 +10,7 @@ Run the eval cases against the agent, several times each, and report.
     python evals/run_evals.py --agent graph --label graph    # Phase 4: the same routes as a LangGraph graph
 
 SINGLE AGENT vs TEAM (Phase 3)
-    --agent single (default) runs agent.run_agent; --agent team runs multi_agent.run_team with the
+    --agent single (default) runs single_agent.run_agent; --agent team runs multi_agent.run_team with the
     same fake servers (no taste server and no login, so the team is Supervisor + Catalog agent).
     The checks read the trace, and nested agents write to the same trace, so the SAME checks score
     both. Each run also counts MODEL CALLS: the team's cost shows next to its pass rate.
@@ -48,11 +48,12 @@ from datetime import datetime
 
 import groq
 
-import agent
-import config
-import graph
-import multi_agent
-import routed
+from concierge import engine as agent
+from baselines import single_agent
+from common import config
+from concierge import graph
+from concierge import team as multi_agent
+from baselines import routed
 from cases import CASES, CASES_BY_ID, normalize_answer
 
 AGENT_KIND = "single"    # set by --agent (or by the self-test)
@@ -96,13 +97,13 @@ def _sha(text: str) -> str:
 
 def fingerprint() -> dict:
     """What was under test. Two result files are only comparable if you know what differed."""
-    tools_src = "".join((config.BASE_DIR / f).read_text(encoding="utf-8") for f in ("catalog_mcp.py", "device_mcp.py"))
-    prompt = agent.SYSTEM if AGENT_KIND == "single" else (
+    tools_src = "".join((config.BASE_DIR / f).read_text(encoding="utf-8") for f in ("servers/catalog/server.py", "servers/device/server.py"))
+    prompt = single_agent.SYSTEM if AGENT_KIND == "single" else (
         multi_agent.SUPERVISOR_SYSTEM + multi_agent.SUPERVISOR_YOUTUBE_LINE + multi_agent.CATALOG_SYSTEM)
     if AGENT_KIND in ("routed", "graph"):  # the router and workflows are code: their source is part of what is tested
-        files = ("router.py", "workflows.py") + (("graph.py",) if AGENT_KIND == "graph" else ())
+        files = ("concierge/router.py", "concierge/workflows.py") + (("concierge/graph.py",) if AGENT_KIND == "graph" else ())
         prompt += "".join((config.BASE_DIR / f).read_text(encoding="utf-8") for f in files)
-        prompt += "".join(p.read_text(encoding="utf-8") for p in sorted((config.BASE_DIR / "skills").glob("*.md")))
+        prompt += "".join(p.read_text(encoding="utf-8") for p in sorted((config.BASE_DIR / "concierge" / "skills").glob("*.md")))
     return {
         "agent": AGENT_KIND,
         "model": agent.MODEL,
@@ -167,7 +168,7 @@ async def run_once(case, rep: int, retries: int, backoff: float) -> dict:
             return await inner.chat.completions.create(**kw)
         return types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
 
-    run = {"single": agent.run_agent, "team": multi_agent.run_team, "routed": routed.run_routed,
+    run = {"single": single_agent.run_agent, "team": multi_agent.run_team, "routed": routed.run_routed,
            "graph": graph.run_graph}[AGENT_KIND]
     for attempt in range(retries + 1):
         trace, buf = [], io.StringIO()
@@ -370,7 +371,7 @@ def main(argv=None) -> int:
 
     config.require("GROQ_API_KEY")
     if not agent.MODEL:
-        sys.exit("GROQ_MODEL is not set. Add GROQ_MODEL=<id> to .env (see `python agent.py --models`).")
+        sys.exit("GROQ_MODEL is not set. Add GROQ_MODEL=<id> to .env (see `python -m tools.groq_models`).")
 
     if args.only:
         ids = [int(x) for x in args.only.split(",") if x.strip()]

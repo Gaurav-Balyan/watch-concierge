@@ -12,9 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import agent
-import config
-import graph
+from concierge import engine as agent
+from common import config
+from concierge import graph
 
 config.STATE_DIR = Path(sys.argv[1])               # the checkpoints of THIS drill
 agent.SERVERS = {"catalog": "evals/srv_catalog_ok.py", "device": "evals/srv_device_live.py"}

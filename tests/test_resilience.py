@@ -26,11 +26,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "evals"))
 
-import agent
-import config
-import graph
-import multi_agent
-import resilience
+from concierge import engine as agent
+from common import config
+from concierge import graph
+from concierge import skill_agents
+from common import resilience
 from eval_servers import EVAL_STATE
 from test_graph import FakeSkillAgent
 from test_routing import FRIEND
@@ -72,12 +72,12 @@ def test_a_crash_in_suggest_resumes_without_saving_the_taste_twice():
                 raise RuntimeError("simulated crash inside the suggest node")
             return await super().run(question, trace)
 
-    saved = (multi_agent.has_taste, multi_agent.taste_agent, multi_agent.consensus_agent,
-             multi_agent.logged_in_username, config.STATE_DIR)
-    multi_agent.has_taste = lambda: True
-    multi_agent.taste_agent = lambda: FakeSkillAgent("taste", log)
-    multi_agent.consensus_agent = lambda trace=None: CrashOnce("consensus", log)
-    multi_agent.logged_in_username = lambda: "gaurav"
+    saved = (skill_agents.has_taste, skill_agents.taste_agent, skill_agents.consensus_agent,
+             skill_agents.logged_in_username, config.STATE_DIR)
+    skill_agents.has_taste = lambda: True
+    skill_agents.taste_agent = lambda: FakeSkillAgent("taste", log)
+    skill_agents.consensus_agent = lambda trace=None: CrashOnce("consensus", log)
+    skill_agents.logged_in_username = lambda: "gaurav"
     config.STATE_DIR = fresh_state()
     try:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -90,8 +90,8 @@ def test_a_crash_in_suggest_resumes_without_saving_the_taste_twice():
             answer = asyncio.run(graph.run_durable(None, "t-suggest"))        # RESUME
             again = asyncio.run(graph.run_durable(None, "t-suggest"))         # finished: nothing runs
     finally:
-        (multi_agent.has_taste, multi_agent.taste_agent, multi_agent.consensus_agent,
-         multi_agent.logged_in_username, config.STATE_DIR) = saved
+        (skill_agents.has_taste, skill_agents.taste_agent, skill_agents.consensus_agent,
+         skill_agents.logged_in_username, config.STATE_DIR) = saved
     assert [p["id"] for p in pending] == ["t-suggest"] and pending[0]["next"] == ["suggest"], pending
     assert [n for n, _ in log] == ["taste", "consensus"], log          # taste ran ONCE, before the crash
     assert answer == again == "answer from consensus" and calls["consensus"] == 2
@@ -192,8 +192,8 @@ def test_retry_backs_off_with_jitter_and_only_for_transient_errors():
 # ----------------------------------------------------------------- the catalog: cache, breaker, stale
 import httpx  # noqa: E402
 
-import catalog_mcp  # noqa: E402
-import lookup  # noqa: E402
+from servers.catalog import server as catalog_mcp  # noqa: E402
+from servers.catalog import lookup  # noqa: E402
 
 
 def http_error(status):
@@ -326,13 +326,14 @@ def test_a_workflow_node_is_retried_when_its_server_died():
 import time  # noqa: E402
 import types  # noqa: E402
 
-import tv  # noqa: E402
+from servers.device import tv  # noqa: E402
 
 
 @contextlib.contextmanager
-def fake_tv(power_states=("Active",), window=2, post_wake=3, listening=True):
-    """A TV at 127.0.0.1: a real TCP listener on a free port (or none = fully OFF), a fake webOS client
-    whose power state goes through `power_states`, and Wake-on-LAN switched off (no packets sent)."""
+def fake_tv(power_states=("Active",), window=2, post_wake=3, listening=True, webos=True):
+    """A TV at 127.0.0.1: a real TCP listener on a free port (listening=False: the probe gets no answer),
+    a fake webOS client whose power state goes through `power_states` (webos=False: every connect fails,
+    i.e. fully OFF), and Wake-on-LAN switched off (no packets sent)."""
     loop_server = {}
     states = list(power_states)
 
@@ -344,6 +345,8 @@ def fake_tv(power_states=("Active",), window=2, post_wake=3, listening=True):
 
     async def fake_connect():
         loop_server["connects"] = loop_server.get("connects", 0) + 1
+        if not webos:
+            raise OSError("no route to host")
         return Client()
 
     saved = (tv.send_wake, tv.connect, tv.TV_PORTS, config.TV_WAKE_WINDOW, config.POST_WAKE_WAIT,
@@ -379,11 +382,20 @@ def timed(coro):
 
 
 def test_a_tv_that_is_fully_off_fails_fast():
-    with fake_tv(window=2, listening=False) as seen:
+    with fake_tv(window=2, listening=False, webos=False) as seen:
         result, took = timed(tv.connect_with_wake())
     assert isinstance(result, tv.TVUnreachable) and "fully off" in str(result)
+    assert "does not answer" in str(result)            # the probe's diagnosis is in the message
     assert took < 4, took                              # ~the 2 s window, not the old 40-90 s loop
-    assert "connects" not in seen                      # no slow websocket attempts at all
+    assert seen["connects"] >= 2                       # it kept trying within the window
+
+
+def test_a_tv_that_is_on_connects_even_if_the_tcp_probe_gets_no_answer():
+    # Seen live: the TV was ON, the plain TCP probe got no answer, and the old gate reported it unreachable.
+    with fake_tv(listening=False, webos=True) as seen:
+        result, took = timed(tv.connect_with_wake())
+    assert not isinstance(result, Exception), result
+    assert took < 1.5 and seen["connects"] == 1, (took, seen)
 
 
 def test_a_tv_that_is_already_on_skips_the_wake_waits():
@@ -420,7 +432,7 @@ import base64  # noqa: E402
 
 import httpx2  # noqa: E402
 
-import login  # noqa: E402
+from common import login  # noqa: E402
 
 
 def fake_token(n: int, exp: float) -> str:

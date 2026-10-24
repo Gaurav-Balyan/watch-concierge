@@ -15,7 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import agent
+from concierge import engine as agent
+from baselines import single_agent
 from test_agent_recovery import FakeGroq, reply
 
 PLAY = ("play_title", '{"service": "netflix", "content_id": "81234567", "title": "The Friend"}')
@@ -54,7 +55,7 @@ def run(a: agent.Agent, toolbox: FakeToolbox, script):
 # ----------------------------------------------------------------- tests
 def test_concierge_records_a_real_play_by_code():
     box = FakeToolbox("requested")
-    run(agent.concierge(), box, [reply(calls=[PLAY]), reply(text="Sent.")])
+    run(single_agent.concierge(), box, [reply(calls=[PLAY]), reply(text="Sent.")])
     names = [n for n, _ in box.calls]
     assert names == ["play_title", "record_watch"], names
     assert box.calls[1][1] == {"title": "The Friend", "service": "netflix", "content_id": "81234567"}
@@ -62,21 +63,21 @@ def test_concierge_records_a_real_play_by_code():
 
 def test_concierge_does_not_record_a_dry_run():
     box = FakeToolbox("dry_run")
-    run(agent.concierge(), box, [reply(calls=[PLAY]), reply(text="Simulated.")])
+    run(single_agent.concierge(), box, [reply(calls=[PLAY]), reply(text="Simulated.")])
     assert [n for n, _ in box.calls] == ["play_title"]
 
 
 def test_concierge_does_not_record_a_failed_play():
     # An error result must never reach the hook, even if its body looks like a real play.
     box = FakeToolbox("requested", play_fails=True)
-    run(agent.concierge(), box, [reply(calls=[PLAY]), reply(text="The TV is off.")])
+    run(single_agent.concierge(), box, [reply(calls=[PLAY]), reply(text="The TV is off.")])
     assert [n for n, _ in box.calls] == ["play_title"]
 
 
 def test_model_cannot_call_record_watch_itself():
     box = FakeToolbox("requested")
     fake_watch = ("record_watch", '{"title": "Anything", "service": "netflix", "content_id": "1"}')
-    _, trace = run(agent.concierge(), box, [reply(calls=[fake_watch]), reply(text="Done.")])
+    _, trace = run(single_agent.concierge(), box, [reply(calls=[fake_watch]), reply(text="Done.")])
     assert box.calls == [], box.calls                     # never reached a server
     assert trace[0]["executed"] is False and "Unknown tool" in trace[0]["result"]
 
@@ -97,13 +98,13 @@ def test_trace_says_which_agent_made_each_call():
 
 def test_concierge_reads_settings_at_call_time():
     # The evals swap agent.SERVERS before calling run_agent; the concierge must see the swap.
-    saved = agent.SERVERS, agent.SYSTEM
-    agent.SERVERS, agent.SYSTEM = {"x": "y.py"}, "swapped"
+    saved = agent.SERVERS, single_agent.SYSTEM
+    agent.SERVERS, single_agent.SYSTEM = {"x": "y.py"}, "swapped"
     try:
-        c = agent.concierge()
+        c = single_agent.concierge()
         assert c.servers == {"x": "y.py"} and c.system == "swapped"
     finally:
-        agent.SERVERS, agent.SYSTEM = saved
+        agent.SERVERS, single_agent.SYSTEM = saved
 
 
 if __name__ == "__main__":

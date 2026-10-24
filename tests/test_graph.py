@@ -22,12 +22,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import agent
-import config
-import graph
-import multi_agent
-import routed
-import router
+from concierge import engine as agent
+from common import config
+from concierge import graph
+from concierge import skill_agents
+from baselines import routed
+from concierge import router
 from test_agent_recovery import reply
 from test_multi_agent import RecordingGroq
 from test_routing import FIXED, FRIEND, NoModel, calls
@@ -124,17 +124,17 @@ class FakeSkillAgent:
 def run_with_taste(request):
     """Taste server 'present' and the skill agents faked: this tests the graph's WIRING (which node
     runs, in which order, whose answer wins). The real agents are tested in test_multi_agent / household."""
-    log, saved = [], (multi_agent.has_taste, multi_agent.taste_agent, multi_agent.consensus_agent,
-                      multi_agent.logged_in_username)
-    multi_agent.has_taste = lambda: True
-    multi_agent.taste_agent = lambda: FakeSkillAgent("taste", log)
-    multi_agent.consensus_agent = lambda trace=None: FakeSkillAgent("consensus", log)
-    multi_agent.logged_in_username = lambda: "gaurav"
+    log, saved = [], (skill_agents.has_taste, skill_agents.taste_agent, skill_agents.consensus_agent,
+                      skill_agents.logged_in_username)
+    skill_agents.has_taste = lambda: True
+    skill_agents.taste_agent = lambda: FakeSkillAgent("taste", log)
+    skill_agents.consensus_agent = lambda trace=None: FakeSkillAgent("consensus", log)
+    skill_agents.logged_in_username = lambda: "gaurav"
     try:
         answer, trace = run(request)                          # NoModel: the router must not need one
     finally:
-        (multi_agent.has_taste, multi_agent.taste_agent, multi_agent.consensus_agent,
-         multi_agent.logged_in_username) = saved
+        (skill_agents.has_taste, skill_agents.taste_agent, skill_agents.consensus_agent,
+         skill_agents.logged_in_username) = saved
     return answer, trace, log
 
 
