@@ -11,9 +11,9 @@ conda activate watch-concierge
 # -----------------------------------------------------------------------------------------------------
 # 1. START EVERYTHING (full mode: login, per-person profiles and taste)
 # -----------------------------------------------------------------------------------------------------
-.\start-concierge.ps1               # starts Keycloak + Postgres (Docker), opens 3 server windows:
+.\start-concierge.ps1               # starts Keycloak + Postgres (+ Jaeger if it exists), opens 3 server windows:
                                     #   catalog-mcp :8001, device-mcp :8002 (first line: LIVE or DRY RUN), taste-mcp :8003
-docker start jaeger                 # optional: trace viewer (the script does not start it) -> http://localhost:16686
+                                    #   + catalog-agent :8004 ONLY if CATALOG_AGENT_URL is set (A2A, optional: section 7b)
 python -m common.login --status            # who is logged in, and for how long
 
 
@@ -42,12 +42,21 @@ python -m concierge.graph "me and Mishika want to watch something"       # SUGGE
 python -m concierge.graph "I like comedy, can you suggest a few titles"  # TASTE then SUGGEST (two nodes, in order)
 python -m concierge.graph "pause the tv"                                 # anything else: FALLBACK to the team
 
+# CHAT (idea 1): one conversation = one thread. Answers continue the open question; history is remembered.
+python -m concierge.graph --chat
+#   you> play game changer          -> it asks: 2021 on Netflix or 2025 on Prime?
+#   you> the 2021 one               -> an ANSWER: plays it (also: "prime", "2", "cancel")
+#   you> actually, is the tv on?    -> a NEW request: the open question is closed first
+#   you> suggest a comedy for me    -> then:  you> play the first one   (the team reads the conversation)
+#   you> quit
+
 
 # -----------------------------------------------------------------------------------------------------
 # 4. IF A REQUEST WAS INTERRUPTED (crash, closed window, PC asleep)
 # -----------------------------------------------------------------------------------------------------
-python -m concierge.graph --pending                       # unfinished requests, and the node each one stopped before
-python -m concierge.graph --resume 20261023-171200-ab12cd # finish it from its last checkpoint (a play is never sent twice)
+python -m concierge.graph --pending                       # unfinished requests: WAITING for your answer, or interrupted (crashed)
+python -m concierge.graph --reply 20261023-171200-ab12cd "prime"   # answer a WAITING one (a question it asked)
+python -m concierge.graph --resume 20261023-171200-ab12cd # finish a CRASHED one from its last checkpoint (never plays twice)
 python -m concierge.graph --draw                          # the graph's shape as Mermaid text (paste into mermaid.live)
 
 
@@ -70,6 +79,7 @@ docker exec household-db psql -U postgres -d household -c "select * from househo
 # TV_WAKE_WINDOW=25         seconds to wait for the TV on the network after Wake-on-LAN (raise if standby is slow)
 # PRIME_PRESS_PLAY=1        also press Play on Prime title pages (off by default)
 # CATALOG_CACHE_TTL=86400   reuse catalog answers for this many seconds
+# CATALOG_AGENT_URL=http://127.0.0.1:8004   the Catalog agent over A2A (its own process, section 7b); empty = in-process
 
 
 # -----------------------------------------------------------------------------------------------------
@@ -78,6 +88,15 @@ docker exec household-db psql -U postgres -d household -c "select * from househo
 python -m baselines.routed "play The Friend 2025"         # same routes, hand-written dispatch (Phase 3), not durable
 python -m concierge.team "play The Friend 2025"    # the team only: Supervisor + specialists (4-6 model calls)
 python -m baselines.single_agent "play The Friend 2025"          # one agent with every tool (Phases 1-2)
+
+
+# -----------------------------------------------------------------------------------------------------
+# 7b. A2A (idea 2, optional): the Catalog agent in its OWN process. Not needed to watch anything.
+# -----------------------------------------------------------------------------------------------------
+python -m servers.catalog_agent.server             # its own window: A2A server on 127.0.0.1:8004 (no login yet)
+irm http://127.0.0.1:8004/.well-known/agent-card.json   # its Agent Card (discovery)
+# then in .env: CATALOG_AGENT_URL=http://127.0.0.1:8004  -> only TEAM requests use it ("play X" is a code workflow)
+python -m concierge.team "where can I watch the diplomat?"   # look for ">>> asking the remote catalog-agent over A2A"
 
 
 # -----------------------------------------------------------------------------------------------------
@@ -96,7 +115,7 @@ ping 192.168.1.6                                 # ...and must reach TV_IP; then
 # -----------------------------------------------------------------------------------------------------
 # 9. TESTS, EVALS, DRILLS (close the 3 server windows first: the tests start their own copies)
 # -----------------------------------------------------------------------------------------------------
-python -m pytest tests                                              # 153 tests (Keycloak + Postgres up)
+python -m pytest tests                                              # 192 tests (Keycloak + Postgres up)
 python evals\drills.py                                              # 5 failure drills, ~1 min, no Groq/TV/RapidAPI
 python evals\run_evals.py --agent graph --reps 3 --label graph      # evals: fake TV + catalog, real Groq
 python evals\run_evals.py --compare evals\results\<A>.json evals\results\<B>.json
@@ -122,6 +141,6 @@ python -m concierge.graph "play The Friend 2025"           # catalog + device st
 # -----------------------------------------------------------------------------------------------------
 # 12. STOP / RESET
 # -----------------------------------------------------------------------------------------------------
-# Close the 3 server windows (or Ctrl+C in each), then:
+# Close the server windows (or Ctrl+C in each), then:
 docker stop keycloak household-db jaeger         # your data stays; docker start brings it back
 Remove-Item -Recurse .state                      # optional: forget unfinished requests, cache, breaker, idempotency records

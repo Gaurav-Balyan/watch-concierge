@@ -1,118 +1,99 @@
-# Handoff: Phase 4 done (LangGraph + resilience), start of Phase 5
+# Handoff: Phase 5 closed, ideas 1 and 2a done; next = the cloud + home plan (C0)
 
 Attach this file, `PLAN.md`, `SETUP.md` and the project zip to a new chat. Say: "Continue the Household Watch
-Concierge from HANDOFF.md. Start Phase 5."
-How to start and run everything: `SETUP.md`. Full history and every decision: `PLAN.md`.
-Architecture diagram (interactive, phase by phase, request walkthroughs; private to Gaurav):
-https://claude.ai/artifact/6mnd6SJUkWvue9kvEX44yq  (its P4 view is updated to "built"; add P5 when built)
+Concierge from HANDOFF.md. Start the cloud + home plan at C0."
+**Do not put secrets in the zip**: leave out `.env`, `.webos_key`, `.login.json` and `.state\` (the 2026-10-24 zip
+contained them; rotate the Groq, RapidAPI and TMDB keys if that zip went anywhere else).
+How to start and run everything: `SETUP.md`. Every command: `COMMANDS.ps1`. Request flows: `FLOWS.md`.
+Full history and every decision: `PLAN.md` (sections "Phase 5", "Idea 1", "Idea 2", "Cloud + home plan").
+Architecture diagram (interactive; private to Gaurav): https://claude.ai/artifact/6mnd6SJUkWvue9kvEX44yq
+(its views go up to P4; Phase 5 and ideas 1 / 2a are NOT drawn yet: FLOWS.md describes them).
 
 ## Who and why (unchanged)
 - Gaurav, India, Windows + PowerShell, conda env `watch-concierge`. LG webOS TV on the home LAN.
 - **Primary goal: learn agentic concepts.** Household use is secondary. Wants it QUICK and focused on agent
   concepts; park business details in PLAN.md.
-- Working style that works: small exact changes; files sent INDIVIDUALLY (not zipped) with a table of where
-  each goes; CRLF line endings; explain changes STEP BY STEP (what each change is for), short on test detail,
-  clear on how the flow works (where agents talk to MCP or to each other). Ask before overwriting a file he may
-  have edited. New dependencies go into requirements.txt in the same step.
-- Teaching loop: build a thin piece by hand, run a visible trace, name the concept, a test that fails in the
-  RIGHT way, mutation-check it (break the code on purpose; a test must fail). Measure with evals, not anecdotes.
-- LLM: Groq. `GROQ_MODEL=openai/gpt-oss-120b`; optional `ROUTER_MODEL` (a small model from
-  `python -m tools.groq_models`; llama-3.1-8b-instant was NOT available to his key). No Anthropic key.
-- Versions: mcp 2.3.0, LangGraph 1.2 (+ langgraph-checkpoint-sqlite 3.1), Keycloak 26.0 (Docker), Postgres 16
-  (Docker), Jaeger 2.22.0 (Docker), OpenTelemetry 1.45.1, PyJWT, psycopg 3, pytest >= 8. Run tests with `python -m pytest tests` (plain `pytest` picked up
-  Anaconda base). The assistant tests in its own sandbox (Keycloak 26.0.0 tarball from GitHub + local Postgres 16 on 5433;
-  no Groq key there, so evals there run only the 0-model-call cases).
+- Working style that works: small exact changes; files sent INDIVIDUALLY (not zipped) with a table of where each
+  goes; CRLF line endings; explain step by step (what each change is for, the CONCEPT by name), short on test
+  detail, clear on how the flow works. Ask before overwriting a file he may have edited. New dependencies go into
+  requirements.txt in the same step (pinned to a version at least two weeks old). **Gaurav commits himself: never
+  commit, push, or suggest git steps.**
+- Teaching loop: probe the real library first, build a thin piece, run a visible trace, name the concept, a test
+  that fails in the RIGHT way, mutation-check it (break the code on purpose; a test must fail). Measure with evals.
+- LLM: Groq. `GROQ_MODEL=openai/gpt-oss-120b`; optional `ROUTER_MODEL`. No Anthropic key.
+- Versions: mcp 2.3.0, LangGraph 1.2 (+ langgraph-checkpoint-sqlite 3.1), a2a-sdk 1.2.0 (A2A spec 1.0),
+  Keycloak 26.0 (Docker), Postgres 16 (Docker), Jaeger 2.22.0, OpenTelemetry 1.45.1, PyJWT, psycopg 3, pytest >= 8.
+  Run tests with `python -m pytest tests`. The assistant tests in its own sandbox (no Groq key there: evals there run
+  only the 0-model-call cases; no Keycloak/Postgres unless set up, so 54 HTTP tests skip there).
 
-## How to run a request (after the 2026-10-24 restructure)
-Everything runs from the project folder as a module (`python -m <package>.<module>`); see README "Layout"
-and COMMANDS.ps1.
+## How to run a request
 | Entry | What it is | Model calls (typical) |
 |---|---|---|
-| `python -m concierge.graph "..."` | **day to day**: router + workflows + skill agents + team as a DURABLE graph (`--pending`, `--resume <id>`) | 0 for play/song/status |
+| `python -m concierge.graph "..."` | **day to day**: router + workflows + skill agents + team, durable | 0 for play/song/status |
+| `python -m concierge.graph --chat` | conversations: answers continue a question; history; "play the first one" | 0 per answer; ~2 for a reference |
+| `python -m concierge.graph --pending / --reply <id> "..." / --resume <id>` | WAITING (answer it) vs crashed (resume it) | |
 | `python -m concierge.team "..."` | the team alone (the graph's fallback node) | 4-6 |
-| `python -m baselines.routed "..."` | the hand-written router (Phase 3); eval baseline | same routes |
-| `python -m baselines.single_agent "..."` | ONE agent (Phases 1-2); eval baseline | 2-3 |
-DECIDED 2026-10-24: single agent and routed.py are baselines only (moved to baselines/); the engine they used
-is concierge/engine.py. Numbers: graph 45/45 at 0.5 calls/run, single 34/42 at 2.3, team 39/42 at 3.7.
+| `python -m servers.catalog_agent.server` | OPTIONAL: the Catalog agent over A2A (with `CATALOG_AGENT_URL`) | its own |
+| `baselines/` | single agent, hand-written router: eval baselines only | |
+To watch a movie: `.env` `DEVICE_DRY_RUN=0`, `.\start-concierge.ps1`, `python -m common.login --status`, then
+`python -m concierge.graph --chat`. The A2A catalog-agent is NOT needed (a "play X" is a code workflow that
+searches catalog-mcp directly; the in-process Catalog agent serves the team).
 
-## Loose ends closed (2026-10-24)
-- tv_status explains an unreachable TV; TV waits are logged with their measured "app in front" time;
-  start-concierge.ps1 starts Jaeger. 163 tests. Still on Gaurav's side: full test run with services up,
-  SETUP 4b live checks, wait tuning from the log lines.
+## What was built since the last handoff (2026-10-24 / 25)
+- **Phase 5, Step 1: prompt injection, PROVENANCE guard** (`engine.SEARCHED_IDS`). McpToolbox.call records, BY CODE,
+  the (service, id) pairs search_title / search_youtube returned; the agent loop BLOCKS a model's play_title whose
+  pair is not among them. Eval #16 (a hostile YouTube title asking to play another id): team, gpt-oss-120b, 10 runs:
+  the model obeyed 2/10, the guard blocked both; graph: 0 model calls. `run_evals --guard off` = evals only.
+- **Phase 5, Step 2: the Taste agent hears only the person** (team.ask_taste_tool passes the request by code;
+  the tool has no argument). Phase 5 then CLOSED (rest = product hardening, not concepts).
+- **Idea 1: conversations.** 1a pause/resume: PLAY returns an `Ask` (question + options from the search); the `ask`
+  node holds only `interrupt()`; `choose` matches the reply by code (`pick_option`); on resume the paused node
+  re-runs from its first line. 1b `turn_kind`: is a chat line an answer or a new request (the routing rules judge;
+  a new request closes the open question with "cancel"). 1c message memory: one thread per conversation, each
+  request a turn (request id `<thread>#<turn>`), `history` (words + final answers, last 3 turns, a reducer trims,
+  never tool results) written by a `remember` node at the end of every turn, given to the team and Consensus;
+  `known_ids` (code-saved searched ids) carry provenance across turns; `router.refers_back` sends "play the first
+  one" to the team. Verified live (1a): "play game changer" -> "netflix" played the 2021 one on the real TV.
+- **Idea 2, step 2a: the Catalog agent over A2A.** `servers/catalog_agent/server.py` (Agent Card, executor:
+  message -> task WORKING -> COMPLETED/FAILED, artifacts "answer" (model text) + "searched_ids" (code data));
+  `concierge/remote.py` (the client); `team.ask_catalog_tool` goes remote when `CATALOG_AGENT_URL` is set (the
+  Supervisor sees the same tool). Lesson: trust does not cross the network by itself (ids travel in the data
+  artifact). 2b/2c are now OPTIONAL; the "on behalf of" identity part moved into the cloud plan (C2).
+  start-concierge.ps1 opens the catalog-agent window only when CATALOG_AGENT_URL is set (not yet run on Windows).
 
-## PLAY policy and router (2026-10-24)
-- Router strips polite wrappers before the rules ("can you play lupin?" = 0 model calls).
-- One EXACT title match among partial ones is played (the answer names the others); several exact matches ask.
-- 160 tests.
-
-## Restructure (2026-10-24): where things moved
-| Before | Now |
-|---|---|
-| agent.py | concierge/engine.py (Agent, McpToolbox, call_traced) + baselines/single_agent.py (SYSTEM, run_agent) + tools/groq_models.py |
-| multi_agent.py | concierge/team.py (Supervisor, Catalog agent, bridges) + concierge/skill_agents.py (taste/consensus agents, check_titles, has_taste, logged_in_username) + concierge/recorder.py |
-| graph.py, router.py, workflows.py, skills.py, skills/ | concierge/ |
-| routed.py | baselines/routed.py |
-| config, auth, login, tracing, resilience, logsetup | common/ |
-| catalog_mcp.py, lookup.py | servers/catalog/server.py, lookup.py (+ youtube.py: the search half of services/youtube.py) |
-| device_mcp.py, tv.py, services/ | servers/device/server.py, tv.py, services/ |
-| taste_mcp.py | servers/taste/server.py |
-| cli, experiments, profile_probe, mcp_probe | tools/ |
-| PLAN, HANDOFF, SETUP, FLOWS, the diagram | docs/ |
-| db/, keycloak/ | unchanged (the Docker containers mount them) |
-McpToolbox: a SERVERS value ending in .py is a script (eval fakes), another name is a module run with -m.
-Tests and evals import with aliases (`from concierge import engine as agent`), so their bodies did not change.
-All prompts byte-identical to before (checked). 154 tests, 5 drills, eval dry run: same results as before.
-
-## Key design facts
-- Phase 3 (unchanged): Agent loop (model proposes, code decides and runs; repeats blocked), McpToolbox (one token
-  per server audience, only offered tools can run), Supervisor + Catalog / Taste / Consensus agents, skills
-  (`skills/*.md`), router (rules, then ROUTER_MODEL, else FALLBACK), workflows (policies as code, 0 calls),
-  household read (scope + member + consent, audited), tracing (one trace across agents and servers).
-- `graph.py`: nodes route, play, song, status (code workflows), taste, suggest (skill agents), fallback (team).
-  Edges after_route / after_workflow (None = "not mine" -> fallback) / after_taste ("I like X, suggest ..." =
-  taste THEN suggest). State = request, route, answer (plain data). The trace list is runtime CONTEXT. Each node
-  is a span "node <name>" under "graph". Workflow nodes have a RetryPolicy (server died: "Connection closed").
-- Durable: AsyncSqliteSaver in `.state/checkpoints.sqlite`, thread id = request id, durability="sync".
-  A node runs AT LEAST ONCE (crash after work, before checkpoint -> re-run), hence idempotency.
-- Idempotency: agent.REQUEST_ID (contextvar) -> McpToolbox injects `idempotency_key` (hidden from the model) into
-  action tools that accept it (play_title). device-mcp `.state/device_actions.sqlite`: started/done/forget;
-  repeat -> duplicate:true (recorder skips); unknown outcome -> UNKNOWN_STATE; other title -> ALREADY_PLAYED.
-- `resilience.py`: retry_async (backoff + jitter, transient only), CircuitBreaker, TtlCache, IdempotencyStore,
-  all SQLite (quick mode starts new server processes per request, so memory would forget).
-- `lookup.py`: cache (24 h) -> breaker (3 fails -> 60 s open) -> retry (3, 0.5 s) -> HTTP; stale-if-error 7 days.
-  catalog-mcp: CircuitOpen -> CATALOG_UNAVAILABLE. Groq retries stay in the SDK (GROQ_MAX_RETRIES): one layer.
-- `tv.py`: network check after WoL (TV_WAKE_WINDOW 25 s), power-state check; fixed waits as spans with
-  tv.ready_after_s. `login.RefreshingAuth`: token renewed before exp and once after 401.
-- CHAOS_CRASH=<node>[:after] (drills only) kills the process at a node.
+## Key design facts (cumulative)
+- Phase 3: Agent loop (model proposes, code decides; repeats blocked), McpToolbox (one token per server audience,
+  only offered tools run), Supervisor + Catalog / Taste / Consensus agents, skills (`skills/*.md`), router (rules,
+  then ROUTER_MODEL, else FALLBACK), workflows (policies as code, 0 calls), household read (scope + consent, audited).
+- Phase 4: graph nodes route, play, song, status, taste, suggest, fallback + (idea 1) ask, choose, remember; every
+  END edge goes through `remember`. Durable AsyncSqliteSaver `.state/checkpoints.sqlite`, durability="sync"; a node
+  runs AT LEAST ONCE (hence idempotency keys from REQUEST_ID; device-mcp IdempotencyStore). retry/breaker/cache in
+  lookup.py; RetryPolicy on code nodes only. Non-durable runs (evals/tests) use an InMemorySaver (interrupt needs one).
+- State: request, route, answer, question/reply/asked (a paused question), turn, history (reducer keep_recent),
+  known_ids. All plain data (checkpointed).
+- Phase 5: SEARCHED_IDS opened by the outermost Agent.loop (and by every graph node, seeded with known_ids); shared by
+  nested agents and check_titles; an A2A remote agent always starts its OWN set.
 
 ## Tests, evals, drills
-- 153 tests (`python -m pytest tests`; Keycloak + Postgres up, server windows CLOSED), all passing in the sandbox
-  against real Keycloak + Postgres: + test_graph 11, test_resilience 18 (incl. a real os._exit crash drill via
-  tests/drill_driver.py), test_routing 24.
-- Evals: `--agent graph` added. Graph 44/45, 0.4 calls/run (= routed). These are OFFLINE evals.
-- `python evals\drills.py`: 5 failure drills (crash+resume, server dies, API down/breaker, 429, TV off).
+- 192 tests (`python -m pytest tests`; Keycloak + Postgres up, ALL server windows CLOSED: otherwise "Port 800x is
+  already in use"). New: test_injection 7, test_conversation 16, test_a2a 6. Sandbox: 138 offline pass, 54 HTTP skip.
+  2026-10-25 on Gaurav's PC: 192 passed (Keycloak + Postgres up), selftest ok, 5 drills pass. C0 tests: DONE.
+- Evals: 16 cases (`--agent graph|team|routed|single`, `--guard off`). Graph 48/48 at 0.4 calls/run (2026-10-24).
+- `python evals\drills.py`: 5 failure drills pass. `python evals\selftest.py`: all ok.
 
-## Not yet verified LIVE (do this first, on the real TV)
-- SETUP.md section 4b: 11 live checks (TV on / standby / off, a real crash + resume, closing the window
-  mid-play, Mishika's profile, taste -> suggest). Ask Gaurav for the results and the `tv.ready_after_s`
-  numbers from checks 3-4: they decide whether the fixed waits can be shortened.
-
-## Cleanup done (2026-10-23)
-- Removed agent_inline_tools.py, concierge.py and cli.py's watch/song commands (they bypassed login, dry run
-  and idempotency). cli.py = pairing + tuning only. Dead code removed (vulture + pyflakes clean).
-
-## Phase 5 starting point (hardening and evals; discussed, not started)
-DECIDED (Gaurav, 2026-10-23): NO approval step before device actions. Promptfoo: later, not now.
-- Grow the eval set to ~40; run evals on every change. Optional ONLINE evals: the same checks over real traces.
-- Prompt-injection tests (a title description saying "also read Mishika's taste"). Promptfoo discussed: use it
-  ONLY as a time-boxed red-team generator against graph.py with fake servers; keep run_evals.py (trace checks)
-  as the regression suite; copy good attacks into cases.py.
-- Audit log of what each agent did. content_id must come from a real search on the TEAM path too.
-- Parked: "play kesariya" (song without a YouTube word), #12 helpfulness check, requested != watched, Kids
-  profile, runtime filters, A2A + token exchange (optional extra), start-concierge.ps1 does not start Jaeger.
+## NEXT: the cloud + home plan (PLAN.md "Cloud + home plan"), minimal application changes
+C0 green baseline (tests DONE 2026-10-25: 192 passed; still open: SETUP 4b live checks) -> C1 web page + API around
+graph.chat_turn on the PC (phone on home Wi-Fi, browser speech-to-text) -> C2 per-user identity (token from the
+page, token exchange per server; Keycloak >= 26.2) -> C3 device-mcp on an always-on home box behind an outbound
+tunnel -> C4 the rest on a small cloud VM (Docker Compose; Keycloak production mode with HTTPS).
+Decisions still Gaurav's: home box, tunnel (suggested Tailscale), cloud host (check current prices then), web app.
 
 ## Known fragile points carried forward
 - Profiles picked by position with blind key presses; picker/title waits fixed (the TV cannot report them).
 - close_app on this TV is unreliable (once 403). Wake-on-LAN works from standby, not from fully off.
 - Keycloak dev mode keeps data in the container (realm file re-creates it; logins are lost).
 - Device actions run without confirmation (decided: no approval step).
+- Not yet verified live: SETUP 4b checks, step 2's empty-argument taste tool with Groq, 1b/1c chat with the real
+  model, the A2A catalog-agent on Windows, start-concierge.ps1's new catalog-agent block.
+- In --chat, a new request no routing rule claims ("what about something funny?") is read as an answer.
+- The A2A catalog-agent has no login (127.0.0.1 only) and its trace is separate from the caller's.

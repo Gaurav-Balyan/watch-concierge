@@ -1,4 +1,4 @@
-# How a request flows (Phase 4 end state)
+# How a request flows (Phase 4 end state, plus Phase 5 and ideas 1 and 2a: see the end)
 
 Two requests traced end to end through `concierge/graph.py`, in full mode (servers over HTTP, logged in as gaurav,
 `DEVICE_DRY_RUN=0`):
@@ -30,6 +30,7 @@ Per graph node:
 | `taste` | ~2 | the Taste agent (`concierge/skills/taste.md`) |
 | `suggest` | ~3 | the Consensus agent (`concierge/skills/suggest.md`); titles confirmed by code (`check_titles`) |
 | `fallback` | 1-5+ | the team: Supervisor, plus specialists through bridges |
+| `ask`, `choose`, `remember` | **0** | code: pause on a question, match the reply, write the history (idea 1) |
 
 In a trace, a model call is a `chat openai/gpt-oss-120b` span. It only ever appears under an `agent ...`
 span (or the router), never inside a server.
@@ -201,3 +202,49 @@ graph
 The rule behind both: **code decides whatever must always hold** (who is asking, which ids are real, what may
 run twice). **A model decides only what needs judgement** (which preference was meant, which titles might fit),
 and its proposals are checked by code before they count.
+
+---
+
+## Added after Phase 4 (Phase 5, ideas 1 and 2a)
+
+### Flow 3: a question and its answer (`--chat`, 0 model calls)
+```
+you> play game changer
+  route (PLAY) -> play: search_title finds 2 exact titles -> an Ask: the question + 2 OPTIONS (service, id
+  from the search) -> ask: interrupt()  ==> the run STOPS; the checkpoint keeps the question and the options
+you> the 2021 one
+  Command(resume="the 2021 one") on the same thread -> ask runs again from its first line, interrupt() returns
+  the reply -> choose: pick_option (code) matches "2021" -> play_title with the SAVED id -> remember -> END
+```
+The reply can only SELECT a saved option: it cannot bring an id. A line that is a new request instead
+("actually, is the tv on?") closes the question first (`turn_kind`, the routing rules decide).
+
+### Flow 4: "play the first one" after a suggestion (message memory, ~2 model calls)
+```
+you> suggest a comedy for me     -> suggest / fallback answers with confirmed titles -> remember writes
+                                    [user: request, assistant: answer] to the thread's history
+you> play the first one          -> route: a PLAY of only reference words + history -> FALLBACK
+                                 -> the Supervisor gets system + history + this request (no tool results)
+                                 -> play_title: allowed because the id is in known_ids (code-saved from the
+                                    earlier SEARCH), not because the history text mentions it
+```
+One conversation = one thread; each request is a turn with its own request id (`<thread>#<turn>`), so two plays in
+one chat are two plays. The last 3 turns are kept.
+
+### Flow 5: the Catalog agent over A2A (optional, `CATALOG_AGENT_URL` set)
+```
+Supervisor --ask_catalog_agent--> concierge/remote.py
+   GET  /.well-known/agent-card.json             (discovery: who it is, where to send messages)
+   POST /  SendMessage "Where is ... streaming?" (JSON-RPC)  ==> catalog-agent process (:8004)
+                                                     Catalog agent (its own model) --MCP--> catalog-mcp
+   <== Task COMPLETED, artifacts: "answer" (model TEXT) + "searched_ids" (DATA, written by CODE)
+Supervisor's process registers ONLY the searched_ids artifact -> play_title is allowed for those ids
+```
+Model calls then also happen in the catalog-agent process (its own `agent catalog` spans, in its own trace).
+
+### What Phase 5 added to every agent path
+- **Provenance guard** (`engine.SEARCHED_IDS`): a model's `play_title` needs a (service, id) that a real search returned
+  in this request (or, in a conversation, an earlier turn): an id written in a title, an answer or the history is
+  BLOCKED. Text in search results is data, never instructions.
+- **The Taste agent hears only the person**: on the team path, code passes your own words to it, never the
+  Supervisor's.

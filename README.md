@@ -16,8 +16,9 @@ python -m concierge.graph "play tum hi ho by arijit singh"             # YouTube
 python -m concierge.graph "is the tv on?"
 python -m concierge.graph "I don't like horror"                        # saved to YOUR taste
 python -m concierge.graph "me and Mishika want to watch something"     # suggestions for both (with consent)
-python -m concierge.graph --pending                                    # requests a crash interrupted
-python -m concierge.graph --resume <request id>                        # finish one (never launches twice)
+python -m concierge.graph --chat                                       # talk in turns: answers, "play the first one"
+python -m concierge.graph --pending                                    # requests waiting for an answer, or crashed
+python -m concierge.graph --resume <request id>                        # finish a crashed one (never launches twice)
 ```
 
 ## Layout
@@ -26,15 +27,18 @@ Run everything from the project folder, as modules: `python -m <package>.<module
 
 ```
 concierge/          the AGENT side (your window)
-  graph.py            the entry point: LangGraph graph (route node, a node per route, checkpoints, resume)
+  graph.py            the entry point: LangGraph graph (route node, a node per route, checkpoints, resume),
+                      conversations (pause/resume on a question, history, --chat)
   router.py           picks the route: rules first, an optional small model, else the team
   workflows.py        PLAY, SONG, STATUS as code (0 model calls; the policies are `if` statements)
   engine.py           the Agent loop and McpToolbox (tokens per server, idempotency keys): used by all agents
   skill_agents.py     the Taste and Consensus agents (built from skills/*.md), check_titles
   skills.py, skills/  skill files: instructions + tools + permissions + turn budget
   team.py             the Supervisor + Catalog agent + bridges: the graph's fallback
+  remote.py           the A2A client: asks a remote agent (optional, CATALOG_AGENT_URL)
   recorder.py         after a real play, code writes the watch history
-servers/            the three MCP servers (no model inside any of them)
+servers/            the three MCP servers (no model inside any of them), and one A2A agent server
+  catalog_agent/      server.py: the Catalog AGENT in its own process over A2A (optional; it uses catalog-mcp)
   catalog/            server.py (search_title, search_youtube), lookup.py (cache, breaker, retries), youtube.py
   device/             server.py (tv_status, play_title: dry run, idempotent), tv.py, services/ (netflix, prime, youtube)
   taste/              server.py (likes, dislikes, history in Postgres: row-level security, consent, audit)

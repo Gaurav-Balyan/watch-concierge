@@ -15,6 +15,7 @@ conda activate watch-concierge
 | `python -m servers.catalog.server --http` | `search_title`: where a title streams in India | its own window | 8001 |
 | `python -m servers.device.server --http` | `tv_status`, `play_title`: controls the TV | its own window | 8002 |
 | `python -m servers.taste.server --http` | `get_my_taste`, `remember_taste`, … | its own window | 8003 |
+| `python -m servers.catalog_agent.server` | OPTIONAL (A2A, idea 2): the Catalog agent in its own process. Only with `CATALOG_AGENT_URL` set; not needed to watch anything | its own window | 8004 |
 | `common/login.py` | Signs one person in (browser), keeps the login in `.login.json` | when needed | 8765 (briefly) |
 | `concierge/team.py` | The team (Phase 3): Supervisor + specialists; the graph's fallback | your window | |
 | `baselines/` | The single agent and the hand-written router: kept only as eval baselines | your window | |
@@ -115,7 +116,8 @@ you go a day without using the agent, or for 7 days at most.
 ```powershell
 .\start-concierge.ps1
 ```
-It starts both containers, waits for Keycloak, opens one window per server and shows who is logged in.
+It starts both containers (and Jaeger if it exists), waits for Keycloak, opens one window per server and shows
+who is logged in. With `CATALOG_AGENT_URL` set in `.env` it also opens the catalog-agent window (A2A, optional).
 The first time, Windows may refuse to run a downloaded script. If so, run this once:
 `Unblock-File .\start-concierge.ps1`, and if needed `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
@@ -158,6 +160,11 @@ python -m concierge.graph --pending                      # requests that did not
 python -m concierge.graph --resume 20261023-171200-ab12cd
 python -m concierge.graph --draw                         # the graph's shape (Mermaid text: paste into mermaid.live)
 ```
+**Conversations (idea 1):** `python -m concierge.graph --chat` keeps one conversation going. When it asks
+("Netflix or Prime?"), your next line answers it ("prime", "the 2021 one", "2", "cancel"); a new request instead
+("actually, is the tv on?") closes the question first. After a suggestion, "play the first one" works: the team
+reads the last 3 turns. Outside chat, a paused request shows as `WAITING` in `--pending`; answer it with
+`python -m concierge.graph --reply <id> "prime"`.
 Phase 4 keeps small state files in `.state\` (git-ignored): checkpoints, the TV's idempotency records, the
 catalog cache and circuit breaker. Deleting the folder is safe (you lose unfinished requests and the cache).
 
@@ -171,7 +178,7 @@ python -m common.login                # sign in as the other person
 ```
 
 ### 2.5 Stop
-Close the three server windows (or press Ctrl+C in each), then:
+Close the server windows (or press Ctrl+C in each), then:
 ```powershell
 docker stop keycloak household-db jaeger
 ```
@@ -230,14 +237,17 @@ python tests\test_taste_http.py    # 13  Mishika cannot read Gaurav's data (serv
 python tests\test_profiles.py      #  6  offline: exact TV key presses per person
 python tests\test_agent_recovery.py #  4  offline: Groq-rejected tool calls do not crash the agent
 python tests\test_agent_loop.py     #  7  offline: record_watch is wired in by code, never by the model
-python tests\test_multi_agent.py    # 11  the team: handoffs, each agent's tools and tokens, whose taste
+python tests\test_multi_agent.py    # 15  the team: handoffs, each agent's tools and tokens, whose taste
 python tests\test_tracing.py        #  7  spans: one trace per request, nesting, no tokens in spans
 python tests\test_household.py      # 10  household read: permission, consent, no history, audit, agents
-python tests\test_routing.py        # 24  offline: router, workflow policies (0 model calls), skills
+python tests\test_routing.py        # 31  offline: router, workflow policies (0 model calls), skills
 python tests\test_graph.py          # 11  offline: the graph = baselines/routed.py (parity), its edges, node spans
-python tests\test_resilience.py     # 18  offline: crash + resume, idempotency, retry, breaker, cache, TV, 401
+python tests\test_resilience.py     # 21  offline: crash + resume, idempotency, retry, breaker, cache, TV, 401
+python tests\test_injection.py      #  7  offline: prompt injection: an id no search returned is blocked; taste hears only you
+python tests\test_conversation.py   # 16  offline: pause/resume on a question, answer or new request, message memory
+python tests\test_a2a.py            #  6  offline: the Catalog agent over A2A (card, task, provenance across the hop)
 ```
-Or all at once: `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
+Or all at once (192 tests): `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
 not plain `pytest`: plain `pytest` can pick up Anaconda's base Python, which has none of the project's
 packages (`No module named 'groq'`). If Keycloak or Postgres is down, those tests show SKIP.
 

@@ -13,5 +13,8 @@ opentelemetry-exporter-otlp-proto-http==1.45.1
 langgraph>=1.2,<2
 # Phase 4, Step 3: durable checkpoints in .state/checkpoints.sqlite
 langgraph-checkpoint-sqlite>=3.1,<4
+# Idea 2: A2A (agent-to-agent). The Catalog agent as its own server (servers/catalog_agent/server.py) and the
+# client in concierge/remote.py. Pinned: the SDK moves fast (spec 1.0; 1.2.0 released 2026-09-29).
+a2a-sdk[http-server]==1.2.0
 # tests: run with  python -m pytest tests  (or each file: python tests\test_<name>.py)
 pytest>=8

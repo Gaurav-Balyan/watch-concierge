@@ -36,13 +36,13 @@ tracing.setup("test", extra_exporter=MEMORY)      # once per process: a global p
 def traced_team(script, request="play The Friend 2025", mapping=None):
     MEMORY.clear()
     fake = RecordingGroq(script)
-    saved = agent.AsyncGroq, agent.SERVERS
-    agent.AsyncGroq, agent.SERVERS = (lambda: fake), dict(mapping or FAKE_SERVERS)
+    saved = agent.AsyncGroq, agent.SERVERS, config.CATALOG_AGENT_URL
+    agent.AsyncGroq, agent.SERVERS, config.CATALOG_AGENT_URL = (lambda: fake), dict(mapping or FAKE_SERVERS), ""
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             asyncio.run(multi_agent.run_team(request, []))
     finally:
-        agent.AsyncGroq, agent.SERVERS = saved
+        agent.AsyncGroq, agent.SERVERS, config.CATALOG_AGENT_URL = saved
     return list(MEMORY.get_finished_spans())
 
 

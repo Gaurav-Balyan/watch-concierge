@@ -151,6 +151,7 @@ def soft_failures(record) -> list[str]:
 # ---------------------------------------------------------------- running
 
 async def run_once(case, rep: int, retries: int, backoff: float) -> dict:
+    config.CATALOG_AGENT_URL = ""      # the fake world only: never a real remote agent (with its real catalog)
     agent.SERVERS = {
         "catalog": f"evals/srv_catalog_{case.catalog}.py",
         "device": f"evals/srv_device_{case.device}.py",

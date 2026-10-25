@@ -47,7 +47,7 @@ import asyncio
 import sys
 
 from common import config, login, tracing
-from concierge import engine, recorder, skill_agents
+from concierge import engine, recorder, remote, skill_agents
 
 CATALOG_SYSTEM = (
     "You are the Catalog agent of a household TV concierge in India. "
@@ -115,12 +115,45 @@ def ask_agent_tool(name: str, owner: str, make_agent, description: str, example:
                             fn=ask, owner=owner, read_only=read_only)
 
 
+CATALOG_TOOL_DESCRIPTION = (
+    "Ask the Catalog agent where a title is streaming in India (Netflix / Prime content ids), or to find "
+    "a song or video on YouTube (start the question with 'Find on YouTube:'; returns video ids).")
+CATALOG_TOOL_EXAMPLE = "e.g. 'Where is The Friend (2025) streaming?'"
+
+
 def ask_catalog_tool(trace: list | None) -> engine.LocalTool:
-    return ask_agent_tool(
-        "ask_catalog_agent", "catalog agent", catalog_agent,
-        "Ask the Catalog agent where a title is streaming in India (Netflix / Prime content ids), or to find "
-        "a song or video on YouTube (start the question with 'Find on YouTube:'; returns video ids).",
-        "e.g. 'Where is The Friend (2025) streaming?'", trace, read_only=True)
+    if config.CATALOG_AGENT_URL:
+        return remote_catalog_tool(trace)        # idea 2: the same agent, in its own process, over A2A
+    return ask_agent_tool("ask_catalog_agent", "catalog agent", catalog_agent, CATALOG_TOOL_DESCRIPTION,
+                          CATALOG_TOOL_EXAMPLE, trace, read_only=True)
+
+
+def remote_catalog_tool(trace: list | None) -> engine.LocalTool:
+    """Idea 2, step 2a: ask_catalog_agent as an A2A CALL. To the Supervisor's model nothing changed: same name,
+    description and schema. Behind it: discovery (the Agent Card), a message, a task, two artifacts."""
+    url = config.CATALOG_AGENT_URL
+
+    async def ask(args: dict) -> str:
+        question = str(args.get("question") or "").strip()
+        if not question:
+            raise ValueError("question is empty")
+        print(f"\n    >>> asking the remote catalog-agent over A2A ({url}): {question!r}")
+        reply = await remote.ask_agent(url, question)     # RemoteAgentError -> a tool error the model is told
+        # PROVENANCE across the network (Phase 5): the ids come from the remote agent's CODE-made artifact, never
+        # from its answer TEXT. In 2a we trust that artifact because it is our own agent on this PC (no login yet).
+        seen = engine.SEARCHED_IDS.get()
+        if seen is not None:
+            seen.update(reply.searched_ids)
+        print(f"    <<< {reply.agent} task {reply.task_id}: COMPLETED, {len(reply.searched_ids)} searched id(s): "
+              f"{' '.join(reply.text.split())[:300]}")
+        return reply.text
+
+    return engine.LocalTool(
+        name="ask_catalog_agent", description=CATALOG_TOOL_DESCRIPTION,
+        parameters={"type": "object",
+                    "properties": {"question": {"type": "string", "description": CATALOG_TOOL_EXAMPLE}},
+                    "required": ["question"]},
+        fn=ask, owner="catalog-agent (A2A)", read_only=True)
 
 
 def ask_consensus_tool(trace: list | None) -> engine.LocalTool:

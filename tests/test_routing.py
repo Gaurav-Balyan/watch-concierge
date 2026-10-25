@@ -43,14 +43,14 @@ class NoModel:
 
 
 def run(request, servers=None, model=NoModel, router_model=""):
-    saved = agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL
-    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = model, dict(servers or FIXED), router_model
+    saved = agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL
+    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = model, dict(servers or FIXED), router_model, ""
     trace = []
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             answer = asyncio.run(routed.run_routed(request, trace))
     finally:
-        agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = saved
+        agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = saved
     return answer, trace
 
 

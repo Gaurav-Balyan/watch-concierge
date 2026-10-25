@@ -552,7 +552,7 @@ product hardening, not agent concepts. Kept as a habit: run the evals after ever
    short-term memory (what carries between turns, what must not), a LangGraph thread that PAUSES on a
    question to the person (interrupt) and RESUMES with the answer, reusing the checkpointer. Small: builds on
    .state/checkpoints.sqlite and the thread id.
-2. **[IMPORTANT, planned] Agents in separate processes (A2A).** The Catalog agent behind its own server (A2A
+2. **[2a DONE; 2b/2c optional, see below] Agents in separate processes (A2A).** The Catalog agent behind its own server (A2A
    spec 1.0); the Supervisor calls it over the network. Learn: discovery (Agent Card), long-running tasks
    (Send Message -> Task: WORKING / COMPLETED / FAILED / INPUT_REQUIRED; streaming or push), failures, timeouts
    and retries between agents, and TWO identities per call: the calling agent AND the person ("Supervisor on
@@ -563,15 +563,37 @@ product hardening, not agent concepts. Kept as a habit: run the evals after ever
    for the one it needs, and only then gets that skill's full instructions and tools (+1 call). Learn: how
    agents pick their own capabilities, and what that freedom costs. Measure it against the router with the
    evals (model calls and accuracy on the same cases).
-4. (idea, not decided) **Cloud + mobile app with voice.** Everything except device-mcp in the cloud; device-mcp
-   stays on the home LAN (webOS + Wake-on-LAN need it) on an always-on box (e.g. a Raspberry Pi), reached
-   through an OUTBOUND tunnel (Tailscale or Cloudflare Tunnel: the cloud cannot dial into a home network).
-   Front end: a web app (PWA) with speech-to-text first; a native app later if at all. Backend: a small web API
-   around run_graph + catalog-mcp + taste-mcp + Postgres + Keycloak (public HTTPS needs a domain) in Docker on
-   one small server. Biggest code change: several people at once, so identity comes from each app user's token
-   (token exchange per server) instead of one .login.json; all servers over HTTP (a mixed stdio/HTTP setup once
-   sent history to one person and the TV profile of another). A play takes 30-60 s: the app needs a "working"
-   status. Rough effort: 6-9 sessions. Order: 1, then 2 (it teaches the remote-agent and identity parts), then this; 3 whenever it fits.
+4. **[NEXT, parked until Gaurav starts it] Cloud + home setup, with a phone web app and voice** (plan agreed
+   2026-10-25: MINIMAL application changes, only what the move needs). See "Cloud + home plan" below.
+
+## Cloud + home plan (parked 2026-10-25)
+Shape: everything except device-mcp in the cloud; device-mcp on an always-on box at home (webOS + Wake-on-LAN need
+the LAN), reached through an OUTBOUND tunnel (the cloud cannot dial into a home network). The phone talks to a small
+web API in the cloud. The agent side (graph, conversations, resilience, injection guard, idempotency) is unchanged.
+Already carries over: servers by URL with per-server tokens (Phase 2); device-mcp verifies tokens from Keycloak's
+published keys (works from home against a cloud Keycloak); all state in files/DB (.state/, Postgres); PKCE login.
+A2A is NOT needed for this (the Catalog agent can stay in-process); 2b/2c are optional except 2b's identity part (C2).
+Minimum changes:
+  1. a small web API + one web page (text box + mic button, browser speech-to-text) around graph.chat_turn
+  2. PER-USER IDENTITY: the page logs the person in (PKCE in the browser) and sends their token; the backend exchanges
+     it for per-server tokens ON BEHALF OF that person (instead of one .login.json). The one real code change
+     (common/login.py + McpToolbox). Standard token exchange needs Keycloak >= 26.2 (we run 26.0): upgrade.
+  3. settings instead of hard-coded 127.0.0.1: public OIDC issuer, device-mcp's public URL (AuthSettings
+     resource_server_url), host/port per server
+  4. packaging: Docker Compose for the cloud side (API, catalog-mcp, taste-mcp, Postgres, Keycloak in PRODUCTION
+     mode on Postgres with HTTPS; Jaeger optional)
+  5. the home box: device-mcp + .webos_key + the tunnel (setup, almost no code); lock the tunnel to the cloud server
+Order (each step works on its own):
+  C0 green baseline: full test suite on Gaurav's PC (DONE 2026-10-25: 192 passed) + SETUP 4b live checks (open)
+  C1 web page + API, still on the PC; use it from the phone on home Wi-Fi (the end-user experience, no cloud yet)
+  C2 per-user identity (each person logs in on their own phone; history and TV profile follow them)
+  C3 device-mcp on the home box behind the tunnel (the PC still runs the rest)
+  C4 everything else to the cloud server; the PC is no longer needed
+  Optional later: a "working..." status for 30-60 s plays, backups.
+Decisions for Gaurav (when starting): home box (Raspberry Pi ~Rs 5-7k / old laptop); tunnel (suggested: Tailscale,
+private, free HTTPS names, which the browser mic and the Keycloak login need, so no domain to buy; or Cloudflare
+Tunnel with a domain); cloud host (a small VM with Docker, roughly $5-20/month or a free tier: CHECK current prices
+then); phone app (suggested: a web app added to the home screen, not native). Rough effort: 6-9 sessions.
 
 ## Idea 1: Conversations that remember (DONE 2026-10-25)
 - 1a (2026-10-24) PAUSE AND RESUME in the PLAY workflow. When play_title must ask (both services, several
@@ -630,6 +652,45 @@ product hardening, not agent concepts. Kept as a habit: run the evals after ever
   refers-back rule). 186 tests; selftest ok; 5 drills pass; graph dry evals 11/11 at 0 calls.
   Cost: a reference turn ("play the first one") is a team run, ~2 model calls (it was 0 calls and a wrong search).
   Not done (on purpose): summarising old turns instead of dropping them; long-term memory beyond taste-mcp.
+
+## Idea 2: Agents in separate processes, A2A (2a done; rest optional)
+Plan: 2a the Catalog agent as its own A2A server (discovery, message -> task, artifacts); 2b identity (a token for
+audience catalog-agent, then "the Supervisor on behalf of <person>" = token exchange); 2c failures between agents
+(remote down, timeouts, long tasks with status/streaming) and one trace across the hop.
+DECIDED 2026-10-25: 2a done; 2b and 2c are OPTIONAL now. The "on behalf of" identity work moves into the cloud plan
+(C2), where it is needed. Candidate if 2b is ever done: the Consensus agent as an A2A server (it alone holds the
+household-read permission, so its own process would make that separation real). taste-mcp and device-mcp stay MCP
+(tools, no model; a model in front of the TV adds calls, latency and an injection surface).
+- 2a (2026-10-25) THE CATALOG AGENT OVER A2A. a2a-sdk[http-server]==1.2.0 (spec 1.0; 1.2.3 was 6 days old: not
+  used). Probed first with a 30-line echo server + client (the official helloworld sample is on 1.1.0).
+  servers/catalog_agent/server.py: the SAME Catalog agent (team.catalog_agent: prompt, model loop, its own MCP
+  connection) behind an A2A server on 127.0.0.1:CATALOG_AGENT_PORT (8004). Agent Card at
+  /.well-known/agent-card.json (name, 2 skills find_title / find_youtube, JSONRPC interface); an AgentExecutor turns
+  a MESSAGE into a TASK: WORKING -> COMPLETED with two ARTIFACTS, "answer" (text, from the MODEL) and
+  "searched_ids" (data, from CODE: the (service, id) pairs its searches returned) | FAILED with the reason.
+  concierge/remote.py: the A2A client (card -> create_client -> SendMessage -> the final task; non-COMPLETED ->
+  RemoteAgentError). team.ask_catalog_tool: CATALOG_AGENT_URL set -> the same tool (name, description, schema) calls
+  the remote agent; the Supervisor's model cannot tell. MCP connects an agent to TOOLS; A2A to another AGENT.
+  LEARNED: TRUST DOES NOT CROSS THE NETWORK BY ITSELF: the Phase 5 guard saw search results because they arrived
+  in the same process; with a remote agent every play would be BLOCKED. The ids now travel in the code-made DATA
+  artifact; the remote model's TEXT is still not provenance (tested: an id only in its answer is blocked). The
+  server always starts its OWN searched-ids set (otherwise an in-process test shares the caller's set and proves
+  nothing; found while writing the tests).
+  tests/test_a2a.py (6): card, message -> completed task with ids, team plays through the remote agent, remote
+  text id blocked, a crash is a FAILED task the Supervisor is told about, the real server process serves its card.
+  The A2A server runs IN the test process (httpx ASGITransport: real HTTP + JSON-RPC, no port) so one scripted model
+  plays both agents. 5 mutations caught (artifact ignored, ids from text, no artifact, crash as COMPLETED, state
+  ignored). 192 tests.
+  Run live: window 1 `python -m servers.catalog_agent.server`; .env CATALOG_AGENT_URL=http://127.0.0.1:8004; then
+  the graph / --chat as usual (only FALLBACK requests use the Catalog agent: workflows search by code).
+  Known gaps (next steps): NO LOGIN (127.0.0.1 only; any local program can call it, and the searched_ids artifact
+  is trusted because it is our own agent) -> 2b. Over HTTP the remote agent uses this PC's .login.json, i.e. the
+  same person, not "on behalf of" the caller -> 2b. Two traces, not one (no traceparent across A2A yet), card
+  fetched on every call, no streaming status, evals do not cover the remote path -> 2c.
+  Found on Gaurav's run (2026-10-25): with CATALOG_AGENT_URL set in .env, 13 team tests failed (the in-process
+  tests sent the question over A2A to a catalog-agent that was not running). Every test and eval world now pins
+  CATALOG_AGENT_URL="" (as they already pinned ROUTER_MODEL); evals/drills would otherwise have used a REAL remote
+  agent with the real catalog. Learned: a new setting is a new input to every test world; pin it where the others are.
 
 ## Known fragile points carried forward
 - TV waits the TV cannot observe (picker, title page) are still fixed; their spans now measure them (Phase 4).

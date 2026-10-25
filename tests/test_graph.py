@@ -36,14 +36,14 @@ from test_tracing import MEMORY, by_name, ours, parent_of      # one tracer prov
 
 def run(request, entry=None, servers=None, model=NoModel):
     entry = entry or graph.run_graph
-    saved = agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL
-    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = model, dict(servers or FIXED), ""
+    saved = agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL
+    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = model, dict(servers or FIXED), "", ""
     trace = []
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             answer = asyncio.run(entry(request, trace))
     finally:
-        agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = saved
+        agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = saved
     return answer, trace
 
 

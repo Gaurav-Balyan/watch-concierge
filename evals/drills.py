@@ -44,6 +44,7 @@ def launches() -> int:
 
 def ask(request: str, catalog="ok", device="dryrun") -> tuple[str, float]:
     agent.SERVERS = {"catalog": f"evals/srv_catalog_{catalog}.py", "device": f"evals/srv_device_{device}.py"}
+    config.CATALOG_AGENT_URL = ""      # fake world only: never a real remote agent
     start = time.monotonic()
     with contextlib.redirect_stdout(io.StringIO()):
         answer = asyncio.run(graph.run_graph(request, []))

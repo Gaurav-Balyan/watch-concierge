@@ -62,15 +62,15 @@ class Conversation:
         self.model, self.servers = model, dict(servers or FIXED)
 
     def say(self, request=None, reply=None):
-        saved = agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL
-        agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = self.model, dict(self.servers), ""
+        saved = agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL
+        agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = self.model, dict(self.servers), "", ""
         trace = []
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 answer = asyncio.run(graph.run_graph(request, trace, thread_id=self.thread,
                                                      checkpointer=self.cp, reply=reply))
         finally:
-            agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = saved
+            agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = saved
         return answer, trace
 
     def snapshot(self):
@@ -144,9 +144,9 @@ def test_cancel_plays_nothing():
 
 
 def test_a_paused_request_is_waiting_not_crashed():
-    saved = config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL
+    saved = config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL
     config.STATE_DIR = Path(tempfile.mkdtemp())
-    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = NoModel, dict(FIXED), ""
+    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = NoModel, dict(FIXED), "", ""
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             asyncio.run(graph.run_durable("play Dual Title 2020", "paused-1"))
@@ -155,7 +155,7 @@ def test_a_paused_request_is_waiting_not_crashed():
             answer = asyncio.run(graph.run_durable(None, "paused-1", reply="prime"))   # another "process" later
             assert not asyncio.run(graph.waiting("paused-1"))
     finally:
-        config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = saved
+        config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = saved
     assert rows == [{"id": "paused-1", "request": "play Dual Title 2020", "next": ["ask"], "waiting": True}], rows
     assert "Prime Video" in answer
 
@@ -177,14 +177,14 @@ def test_turn_kind_answer_or_new():
 @contextlib.contextmanager
 def chat_world():
     """Fake servers, no model, and a temporary .state/ (checkpoints on disk, as in --chat)."""
-    saved = config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL
+    saved = config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL
     config.STATE_DIR = Path(tempfile.mkdtemp())
-    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = NoModel, dict(FIXED), ""
+    agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = NoModel, dict(FIXED), "", ""
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             yield
     finally:
-        config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL = saved
+        config.STATE_DIR, agent.AsyncGroq, agent.SERVERS, config.ROUTER_MODEL, config.CATALOG_AGENT_URL = saved
 
 
 def history_of(thread):

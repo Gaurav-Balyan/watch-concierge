@@ -127,6 +127,12 @@ TASTE_MCP_URL = os.environ.get("TASTE_MCP_URL", "")
 # taste_mcp.py connects as the limited role taste_app (see db/01_init.sql), never as the superuser.
 TASTE_DB_URL = os.environ.get("TASTE_DB_URL", "postgresql://taste_app:taste-dev-pass@127.0.0.1:5433/household")
 
+# Idea 2 (A2A): the Catalog AGENT as its own process (python -m servers.catalog_agent.server, an A2A server).
+# Set CATALOG_AGENT_URL=http://127.0.0.1:8004 to make the Supervisor call it over A2A; empty = in-process, as before.
+CATALOG_AGENT_PORT = _int("CATALOG_AGENT_PORT", 8004)
+CATALOG_AGENT_URL = os.environ.get("CATALOG_AGENT_URL", "")
+A2A_TIMEOUT = _int("A2A_TIMEOUT", 120)          # seconds for one remote agent task (its model + its searches)
+
 # --- Phase 3, Step 4: OpenTelemetry tracing (see tracing.py) ---
 # TRACING: empty = off (default). "print" = span tree printed after each run. "jaeger" = send to Jaeger.
 # "print,jaeger" = both.

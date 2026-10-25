@@ -54,14 +54,15 @@ class RecordingGroq:
 
 def run_offline(script, request="play The Friend 2025", servers=None):
     fake = RecordingGroq(script)
-    saved = agent.AsyncGroq, agent.SERVERS
-    agent.AsyncGroq, agent.SERVERS = (lambda: fake), dict(servers or FAKE_SERVERS)
+    saved = agent.AsyncGroq, agent.SERVERS, config.CATALOG_AGENT_URL
+    # CATALOG_AGENT_URL "": the in-process Catalog agent, whatever .env says (test_a2a tests the A2A path).
+    agent.AsyncGroq, agent.SERVERS, config.CATALOG_AGENT_URL = (lambda: fake), dict(servers or FAKE_SERVERS), ""
     trace = []
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             answer = asyncio.run(multi_agent.run_team(request, trace))
     finally:
-        agent.AsyncGroq, agent.SERVERS = saved
+        agent.AsyncGroq, agent.SERVERS, config.CATALOG_AGENT_URL = saved
     return answer, trace, fake
 
 
