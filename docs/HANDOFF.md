@@ -89,6 +89,10 @@ tunnel -> C4 the rest on a small cloud VM (Docker Compose; Keycloak production m
 WORKING NOW (2026-10-25): phone -> Tailscale -> SSH -> this PC -> chat.ps1 -> the TV (a YouTube song played from
 the iPhone). No code changes. Firewall rule sshd-tailscale; keep the PC from sleeping. Likely direction: all at home
 (free), C1 = a web page served from the box instead of the SSH app.
+NOW (2026-10-25 evening): the TELEGRAM BOT (concierge/telegram_bot.py) is the daily front end, verified live from the
+iPhone: text + voice notes, no open port. SSH over Tailscale = optional maintenance only. The PC must stay awake
+with start-concierge.ps1's windows (servers + bot) running. Next candidates: C2 (per-person identity: map each
+Telegram user to a login) and moving everything to an always-on box.
 Decisions still Gaurav's: home box, tunnel (suggested Tailscale), cloud host (check current prices then), web app.
 
 ## Known fragile points carried forward

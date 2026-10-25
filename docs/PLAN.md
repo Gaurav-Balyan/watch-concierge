@@ -607,6 +607,8 @@ in the chat; polling retries with backoff. Identity until C2: whoever is logged 
 opens the bot window when TELEGRAM_BOT_TOKEN is set. tests/test_telegram.py (8) against a FAKE Telegram (httpx mock
 transport), incl. end to end through the real graph; 6 mutations caught (no allowlist, offset stuck, no thread,
 voice ignored, an error stops the bot, groups answered). 200 tests. Trade-off: messages pass through Telegram.
+VERIFIED LIVE 2026-10-25: Gaurav uses the bot from his iPhone. SSH/Tailscale are no longer needed for daily use
+(kept only as an optional maintenance door: restart the bot, log in again).
 Decisions for Gaurav (when starting): home box (Raspberry Pi ~Rs 5-7k / old laptop); tunnel (suggested: Tailscale,
 private, free HTTPS names, which the browser mic and the Keycloak login need, so no domain to buy; or Cloudflare
 Tunnel with a domain); cloud host (a small VM with Docker, roughly $5-20/month or a free tier: CHECK current prices
