@@ -192,8 +192,8 @@ def test_retry_backs_off_with_jitter_and_only_for_transient_errors():
 # ----------------------------------------------------------------- the catalog: cache, breaker, stale
 import httpx  # noqa: E402
 
-from servers.catalog import server as catalog_mcp  # noqa: E402
-from servers.catalog import lookup  # noqa: E402
+from servers.catalog_agent import server as catalog_mcp  # noqa: E402
+from servers.catalog_agent import lookup  # noqa: E402
 
 
 def http_error(status):

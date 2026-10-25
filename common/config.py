@@ -133,6 +133,13 @@ CATALOG_AGENT_PORT = _int("CATALOG_AGENT_PORT", 8004)
 CATALOG_AGENT_URL = os.environ.get("CATALOG_AGENT_URL", "")
 A2A_TIMEOUT = _int("A2A_TIMEOUT", 120)          # seconds for one remote agent task (its model + its searches)
 
+# Telegram bot (python -m concierge.telegram_bot): a chat front end with text AND voice notes, no open port.
+# TELEGRAM_BOT_TOKEN from @BotFather (a secret: keep it in .env only). TELEGRAM_ALLOWED_IDS: the numeric Telegram user
+# ids that may use it, comma-separated; everyone else is IGNORED (the bot prints their id in its window, once).
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_ALLOWED_IDS = _list("TELEGRAM_ALLOWED_IDS", "")
+TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "whisper-large-v3-turbo")   # Groq speech-to-text for voice notes
+
 # --- Phase 3, Step 4: OpenTelemetry tracing (see tracing.py) ---
 # TRACING: empty = off (default). "print" = span tree printed after each run. "jaeger" = send to Jaeger.
 # "print,jaeger" = both.

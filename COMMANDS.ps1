@@ -51,6 +51,13 @@ python -m concierge.graph --chat
 #   you> quit
 
 
+# TELEGRAM (text + voice notes from the phone; no open port). Once: @BotFather /newbot -> token into .env:
+#   TELEGRAM_BOT_TOKEN=123456789:AA...      then start the bot, message it, copy YOUR id from its window into:
+#   TELEGRAM_ALLOWED_IDS=<your id>[,<mishika's id>]      and restart the bot. Everyone else is ignored.
+python -m concierge.telegram_bot                       # or let .\start-concierge.ps1 open it (token set)
+# In Telegram: /start (help), /new (fresh conversation), then type or hold the mic: "play the diplomat"
+
+
 # -----------------------------------------------------------------------------------------------------
 # 4. IF A REQUEST WAS INTERRUPTED (crash, closed window, PC asleep)
 # -----------------------------------------------------------------------------------------------------

@@ -597,6 +597,16 @@ the phone. Found: the PC had dropped off Tailscale (grey dot) = the first failur
 changes. Free options checked 2026-10-25: Oracle Always Free cut to 2 OCPU / 12 GB on 2026-06-15; Tailscale
 Personal free (6 users); Groq free tier ~1,000 requests/day; Vercel fits only the web PAGE (functions are
 short-lived, no persistent disk, can't reach the tailnet). Leaning: everything at home, phone via Tailscale.
+C1 CHOSEN AS A TELEGRAM BOT (2026-10-25), instead of our own web page: concierge/telegram_bot.py. A chat app gives the
+microphone (voice notes) and visible text for free; LONG POLLING (getUpdates, offset) means only OUTBOUND connections
+from the PC: no open port, no HTTPS certificate, works from any network without Tailscale. Voice notes -> Groq
+speech-to-text (TRANSCRIBE_MODEL=whisper-large-v3-turbo, same key) -> "I heard: ..." -> graph.chat_turn. Each chat =
+one conversation thread (.state/telegram_threads.json; /new resets). ONLY TELEGRAM_ALLOWED_IDS: strangers get no reply
+(their id is printed in the bot window once, so the owner can allow himself). Private chats only. Errors are told
+in the chat; polling retries with backoff. Identity until C2: whoever is logged in on the PC. start-concierge.ps1
+opens the bot window when TELEGRAM_BOT_TOKEN is set. tests/test_telegram.py (8) against a FAKE Telegram (httpx mock
+transport), incl. end to end through the real graph; 6 mutations caught (no allowlist, offset stuck, no thread,
+voice ignored, an error stops the bot, groups answered). 200 tests. Trade-off: messages pass through Telegram.
 Decisions for Gaurav (when starting): home box (Raspberry Pi ~Rs 5-7k / old laptop); tunnel (suggested: Tailscale,
 private, free HTTPS names, which the browser mic and the Keycloak login need, so no domain to buy; or Cloudflare
 Tunnel with a domain); cloud host (a small VM with Docker, roughly $5-20/month or a free tier: CHECK current prices

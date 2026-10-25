@@ -9,7 +9,7 @@ import os
 import httpx
 
 from common import config
-from servers.catalog import lookup
+from servers.catalog_agent import lookup
 from servers.device import tv
 from servers.device.services import prime
 

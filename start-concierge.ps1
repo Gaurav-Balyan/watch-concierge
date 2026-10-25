@@ -6,6 +6,7 @@
 # 2. waits until Keycloak answers
 # 3. opens one PowerShell window per MCP server (catalog, device, taste)
 #    + the catalog-agent (A2A, idea 2) window, but ONLY when CATALOG_AGENT_URL is set in .env
+#    + the Telegram bot window, but ONLY when TELEGRAM_BOT_TOKEN is set in .env
 # 4. shows who is logged in
 # Stop: close the server windows, then  docker stop keycloak household-db jaeger
 
@@ -71,17 +72,30 @@ Write-Host "Opened three server windows. The device window's first line says LIV
 
 # The catalog-agent (A2A server, idea 2): only needed when the Supervisor is set to call it over the network.
 # Not set = the Catalog agent runs inside the concierge, as before, and no window is opened.
-$agentUrl = $env:CATALOG_AGENT_URL
-if (-not $agentUrl -and (Test-Path "$root\.env")) {
-    $line = Select-String -Path "$root\.env" -Pattern '^\s*CATALOG_AGENT_URL\s*=\s*(\S+)' | Select-Object -First 1
-    if ($line) { $agentUrl = $line.Matches[0].Groups[1].Value.Trim('"', "'") }
+function Get-Setting($name) {
+    # A setting from this window's environment, else from .env (commented lines with # are skipped).
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if (-not $value -and (Test-Path "$root\.env")) {
+        $line = Select-String -Path "$root\.env" -Pattern "^\s*$name\s*=\s*(\S+)" | Select-Object -First 1
+        if ($line) { $value = $line.Matches[0].Groups[1].Value.Trim('"', "'") }
+    }
+    return $value
 }
+$agentUrl = Get-Setting "CATALOG_AGENT_URL"
 if ($agentUrl) {
     $command = "`$host.UI.RawUI.WindowTitle = 'catalog-agent (A2A) :8004'; conda activate watch-concierge; python -m servers.catalog_agent.server"
     Start-Process powershell -WorkingDirectory $root -ArgumentList "-NoExit", "-Command", $command
     Write-Host "Opened the catalog-agent window (A2A, $agentUrl): CATALOG_AGENT_URL is set."
 } else {
     Write-Host "catalog-agent not started: CATALOG_AGENT_URL is not set (the Catalog agent runs in-process)."
+}
+
+# The Telegram bot (text + voice notes from the phone): only when it has a token. It needs the servers above.
+if (Get-Setting "TELEGRAM_BOT_TOKEN") {
+    Start-Sleep -Seconds 3                     # let the server windows come up first
+    $command = "`$host.UI.RawUI.WindowTitle = 'telegram bot'; conda activate watch-concierge; python -m concierge.telegram_bot"
+    Start-Process powershell -WorkingDirectory $root -ArgumentList "-NoExit", "-Command", $command
+    Write-Host "Opened the Telegram bot window: TELEGRAM_BOT_TOKEN is set."
 }
 
 # ---- 4. Who is logged in (uses the environment active in THIS window)

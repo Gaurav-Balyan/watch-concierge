@@ -47,8 +47,8 @@ def _stderr_to_file():
 
 def serve_catalog(mode: str):
     _stderr_to_file()
-    from servers.catalog import server as catalog_mcp
-    from servers.catalog import lookup
+    from servers.catalog_agent import server as catalog_mcp
+    from servers.catalog_agent import lookup
     from fixtures import search
 
     if mode == "ok":
