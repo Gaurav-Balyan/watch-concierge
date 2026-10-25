@@ -86,6 +86,9 @@ C0 green baseline (tests DONE 2026-10-25: 192 passed; still open: SETUP 4b live 
 graph.chat_turn on the PC (phone on home Wi-Fi, browser speech-to-text) -> C2 per-user identity (token from the
 page, token exchange per server; Keycloak >= 26.2) -> C3 device-mcp on an always-on home box behind an outbound
 tunnel -> C4 the rest on a small cloud VM (Docker Compose; Keycloak production mode with HTTPS).
+WORKING NOW (2026-10-25): phone -> Tailscale -> SSH -> this PC -> chat.ps1 -> the TV (a YouTube song played from
+the iPhone). No code changes. Firewall rule sshd-tailscale; keep the PC from sleeping. Likely direction: all at home
+(free), C1 = a web page served from the box instead of the SSH app.
 Decisions still Gaurav's: home box, tunnel (suggested Tailscale), cloud host (check current prices then), web app.
 
 ## Known fragile points carried forward

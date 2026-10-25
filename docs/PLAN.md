@@ -590,6 +590,13 @@ Order (each step works on its own):
   C3 device-mcp on the home box behind the tunnel (the PC still runs the rest)
   C4 everything else to the cloud server; the PC is no longer needed
   Optional later: a "working..." status for 30-60 s plays, backups.
+INTERIM, WORKING 2026-10-25: the PC is the 'box'. Tailscale on the PC (desktop-u7ufjdl) and the iPhone; Windows
+OpenSSH Server; firewall rule sshd-tailscale (port 22 from 100.64.0.0/10 only, any profile: the default OpenSSH
+rule was Private-only); the phone's SSH app runs chat.ps1 (= --chat). Verified: a YouTube song opened on the TV from
+the phone. Found: the PC had dropped off Tailscale (grey dot) = the first failure; PC must not sleep. ZERO code
+changes. Free options checked 2026-10-25: Oracle Always Free cut to 2 OCPU / 12 GB on 2026-06-15; Tailscale
+Personal free (6 users); Groq free tier ~1,000 requests/day; Vercel fits only the web PAGE (functions are
+short-lived, no persistent disk, can't reach the tailnet). Leaning: everything at home, phone via Tailscale.
 Decisions for Gaurav (when starting): home box (Raspberry Pi ~Rs 5-7k / old laptop); tunnel (suggested: Tailscale,
 private, free HTTPS names, which the browser mic and the Keycloak login need, so no domain to buy; or Cloudflare
 Tunnel with a domain); cloud host (a small VM with Docker, roughly $5-20/month or a free tier: CHECK current prices
