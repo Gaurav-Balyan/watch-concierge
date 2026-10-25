@@ -165,6 +165,17 @@ async def by_model(request: str) -> Route | None:
     return Route(kind, "classified by the router model", "model", params)
 
 
+# Idea 1c: "play the first one", "play it again": a PLAY whose "title" only points back at an earlier turn.
+_REFERENCE_WORDS = {"it", "that", "this", "one", "ones", "the", "first", "second", "third", "fourth", "last",
+                    "1st", "2nd", "3rd", "4th", "other", "same", "again", "them", "please", "now"}
+
+
+def refers_back(r: Route) -> bool:
+    """True for a PLAY route whose title is only reference words (or a number): it needs the conversation."""
+    words = re.findall(r"\w+", str(r.params.get("title", "")).casefold())
+    return r.kind == "PLAY" and bool(words) and all(w in _REFERENCE_WORDS or w.isdigit() for w in words)
+
+
 async def route(request: str) -> Route:
     return (by_rules(request) or await by_model(request)
             or Route("FALLBACK", "no rule matched and no router model set", "default"))

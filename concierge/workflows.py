@@ -14,6 +14,10 @@ are `if` statements here, so they always hold and a unit test can prove them:
     * the answer never claims playback: the TV cannot confirm it
 Each workflow opens only the servers it needs (one narrow token each). The final sentence is a
 TEMPLATE, not model text: it costs nothing and cannot overclaim; the price is plainer wording.
+
+Idea 1 (multi-turn): when PLAY has to ask ("Netflix or Prime?", "which Game Changer?"), it returns an
+Ask: the question text PLUS the options code will accept, each a (service, content id) from the search.
+The graph pauses on it and later plays the option the reply picks (pick_option, code, no model).
 """
 import json
 import re
@@ -38,6 +42,55 @@ def same_title(a: str, b: str) -> bool:
 
 def _label(m: dict) -> str:
     return f"{m['title']} ({m['year']})" if m.get("year") else m["title"]
+
+
+class Ask(str):
+    """A QUESTION to the person. It IS the question text (a str), so everything that shows answers keeps
+    working; `.options` are the only things a reply can choose: [{label, service, content_id, title}],
+    straight from the search result (plain data, so the graph can save it in a checkpoint)."""
+    options: list
+
+    def __new__(cls, text: str, options: list):
+        obj = super().__new__(cls, text)
+        obj.options = options
+        return obj
+
+
+def _options(matches: list[dict]) -> list[dict]:
+    """One option per (title, service): what a reply can pick."""
+    return [{"label": f"{_label(m)} on {SERVICE_NAMES[s]}", "service": s, "content_id": m["ids"][s],
+             "title": _label(m)} for m in matches for s in m["ids"]]
+
+
+_ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3}
+_SERVICE_WORDS = {"netflix": "netflix", "prime": "prime", "amazon": "prime", "youtube": "youtube"}
+_YES = re.compile(r"^\s*(yes|yeah|yep|yup|ok|okay|sure|go ahead|do it|play it|please)\b", re.I)
+_CANCEL = re.compile(r"^\s*(no|nope|cancel|stop|never\s*mind|nothing|leave it|forget it)\b", re.I)
+
+
+def pick_option(reply: str, options: list[dict]):
+    """Which option a reply means, by CODE: an option dict, "cancel", or None (unclear).
+    Reads a number or ordinal ("2", "the second"), a service ("prime"), a year ("2021"), or "yes" when
+    there is only one option. Anything else is unclear: we ask again rather than guess."""
+    text = " ".join(str(reply).casefold().split())
+    words = re.findall(r"[\w]+", text)
+    found, used = list(range(len(options))), False
+    numbers = [int(w) - 1 for w in words if w.isdigit() and len(w) == 1] + [_ORDINALS[w] for w in words if w in _ORDINALS]
+    if numbers:
+        found, used = [i for i in found if i in numbers], True
+    services = {_SERVICE_WORDS[w] for w in words if w in _SERVICE_WORDS}
+    if services:
+        found, used = [i for i in found if options[i]["service"] in services], True
+    years = set(re.findall(r"\b(?:19|20)\d{2}\b", text))
+    if years:
+        found, used = [i for i in found if any(y in options[i]["title"] for y in years)], True
+    if used and len(found) == 1:
+        return options[found[0]]
+    if not used and len(options) == 1 and _YES.match(text):
+        return options[0]
+    if _CANCEL.match(text):
+        return "cancel"
+    return None
 
 
 async def _play(box, service: str, content_id: str, label: str, trace, who: str, note: str = "") -> str:
@@ -99,19 +152,29 @@ async def play_title(params: dict, trace: list | None) -> str | None:
             ordered = sorted(matches, key=lambda m: not same_title(m["title"], title))   # exact matches first
             options = "; ".join(f"{_label(m)} on {' and '.join(SERVICE_NAMES[s] for s in m['ids'])}"
                                 for m in ordered)
-            return f"I found {len(matches)} titles called {title}: {options}. Which one do you mean?"
+            return Ask(f"I found {len(matches)} titles called {title}: {options}. Which one do you mean?",
+                       _options(ordered))
         m = matches[0]
         services = list(m["ids"])
         if wanted:
             if wanted not in m["ids"]:
                 where = " and ".join(SERVICE_NAMES[s] for s in services)
-                return f"{_label(m)} is not on {SERVICE_NAMES[wanted]}, it is on {where}. Shall I play it there?"
+                return Ask(f"{_label(m)} is not on {SERVICE_NAMES[wanted]}, it is on {where}. Shall I play it there?",
+                           _options([m]))
             service = wanted
         elif len(services) > 1:
-            return f"{_label(m)} is on both Netflix and Prime Video. Which one would you like?"   # the decided policy
+            return Ask(f"{_label(m)} is on both Netflix and Prime Video. Which one would you like?",   # the decided policy
+                       _options([m]))
         else:
             service = services[0]
         return await _play(box, service, m["ids"][service], _label(m), trace, who, note)
+
+
+async def play_option(option: dict, trace: list | None) -> str:
+    """Play what the person picked from an Ask's options (idea 1). The id comes from the SAVED search
+    result (plain data written by code into the checkpoint), never from the reply's words."""
+    async with engine.McpToolbox(_servers("device")) as box:
+        return await _play(box, option["service"], option["content_id"], option["title"], trace, "workflow:choose")
 
 
 async def play_song(params: dict, trace: list | None) -> str | None:

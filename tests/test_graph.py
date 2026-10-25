@@ -55,13 +55,15 @@ def tools(trace):
 def test_the_graph_has_the_designed_shape():
     g = graph.GRAPH.get_graph()
     assert set(g.nodes) == {"__start__", "route", "play", "song", "status", "taste", "suggest", "fallback",
-                            "__end__"}, set(g.nodes)
+                            "ask", "choose", "remember", "__end__"}, set(g.nodes)
     edges = {(e.source, e.target) for e in g.edges}
     assert edges == {("__start__", "route"),
                      *(("route", n) for n in ("play", "song", "status", "taste", "suggest", "fallback")),
-                     ("play", "fallback"), ("play", "__end__"), ("song", "fallback"), ("song", "__end__"),
-                     ("status", "__end__"), ("taste", "suggest"), ("taste", "__end__"),
-                     ("suggest", "__end__"), ("fallback", "__end__")}, edges
+                     ("play", "fallback"), ("play", "remember"), ("song", "fallback"), ("song", "remember"),
+                     ("play", "ask"), ("ask", "choose"), ("choose", "ask"), ("choose", "remember"),   # idea 1
+                     ("status", "remember"), ("taste", "suggest"), ("taste", "remember"),
+                     ("suggest", "remember"), ("fallback", "remember"),
+                     ("remember", "__end__")}, edges                     # idea 1c: every turn ends in remember
 
 
 # ----------------------------------------------------------------- parity with routed.py
@@ -116,7 +118,7 @@ class FakeSkillAgent:
     def __init__(self, name, log):
         self.name, self.log = name, log
 
-    async def run(self, question, trace):
+    async def run(self, question, trace, history=None):
         self.log.append((self.name, question))
         return f"answer from {self.name}"
 
@@ -173,7 +175,7 @@ def test_nodes_show_as_spans_in_one_trace():
     root = by_name(spans, "graph")[0]
     assert root.parent is None
     nodes = sorted((s for s in spans if s.name.startswith("node ")), key=lambda s: s.start_time)
-    assert [s.name for s in nodes] == ["node route", "node play"], [s.name for s in nodes]
+    assert [s.name for s in nodes] == ["node route", "node play", "node remember"], [s.name for s in nodes]
     assert all(parent_of(spans, s) is root for s in nodes)
     assert nodes[0].attributes["route.kind"] == "PLAY"
     for tool in ("execute_tool search_title", "execute_tool play_title"):
@@ -190,7 +192,7 @@ def test_state_is_plain_data():
             state = asyncio.run(graph.GRAPH.ainvoke({"request": "play The Friend 2025"}, context=graph.Run()))
     finally:
         agent.SERVERS = saved
-    assert set(state) == {"request", "route", "answer"}, set(state)
+    assert set(state) == {"request", "route", "answer", "history", "known_ids"}, set(state)   # + idea 1c
     assert json.loads(json.dumps(state)) == state
 
 

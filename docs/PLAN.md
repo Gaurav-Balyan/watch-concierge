@@ -92,25 +92,6 @@ Findings on this LG TV (India):
 - **Title on both services: the agent asks which one.** (Not "pick Netflix".) `cli.py watch` is a
   separate path and still prefers Netflix automatically; the two intentionally differ.
 
-## Deferred: open questions (parked on purpose; the goal is learning concepts, not business detail)
-Come back to these only if/when they matter. Defaults are what the assistant would do.
-1. After the agent asks "Netflix or Prime?", the user's reply starts a NEW run with no memory of the title.
-   a) accept it (retype the full request)   b) add a `--chat` mode that keeps conversation state  [default: b;
-   it is also the natural way to learn how context carries across turns]
-2. Naming the service in the request ("play Dual Title 2020 on Prime") should skip the question.
-   [default: yes; add case 12 so an agent that always asks cannot pass]
-3. Over-hedging ("you may need to press Play" after the tool pressed Play): forbid with one system-prompt
-   line, measured by case 11. "Enjoy!" stays a soft warning only. [default as stated]
-4. Order of changes: update case 10 + add case 12 and re-baseline with 10 reps; THEN add the "ask" prompt
-   line and `--compare`; THEN the no-press-Play-advice line and `--compare`. One change at a time so each
-   result has one explanation. [default as stated]
-
-## Phase 1 remaining (small)
-- Optional: one measured before/after change to experience the eval loop with real runs
-  (`python evals/run_evals.py --only 11 --reps 10 --label before`, change ONE line, rerun, `--compare`).
-- Update case 10 to the "ask" policy (decided above) when convenient.
-- Then Phase 2 (identity and data): "who is asking" also fixes the first-profile-only limit on Prime/Netflix.
-
 ## Phase 2: DONE (identity and data), completed 2026-10-20
 Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev passwords `<name>-dev-pass`.
 - Step 1 DONE: Keycloak 26.0 in Docker, dev mode (HTTP, built-in DB; production needs HTTPS + Postgres).
@@ -182,41 +163,6 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   `tests/test_agent_recovery.py` (4, fake Groq replaying the real 400 body). Mutation-checked.
   Learned: a model can fail at the PROVIDER boundary too, not only at the tool boundary; errors there arrive as
   exceptions in your loop, not as tool results.
-
-## Parked from Phase 3 (come back later)
-- Tracing: start-concierge.ps1 does not start Jaeger yet. Server-side spans for each fixed wait inside
-  services/netflix.py and prime.py (today one "tv open title" span covers them all) would show exactly where
-  the ~50 s of a Netflix run go: useful input for Phase 4 (replace fixed sleeps with checks).
-- LangGraph (decided 2026-10-20): NOT in Phase 3's main steps. Optional at the end of Phase 3: rebuild the same
-  Supervisor/specialist flow as a LangGraph graph and run the same tests (what a framework gives vs hides).
-  Otherwise adopt it in Phase 4 as the durable workflow engine (checkpointing). Check first that LangGraph's
-  MCP adapter supports mcp 2.x (2.x renamed APIs; we are on 2.3.0). Groq via the LangChain Groq integration.
-- A2A (decided 2026-10-20): keep agent-to-agent calls as in-process Python functions for Phase 3. Later
-  (Phase 4 or 5): put the Catalog agent behind A2A (spec 1.0, Linux Foundation): Agent Card for discovery,
-  Keycloak token with audience catalog-agent, Send Message -> Task (WORKING / COMPLETED / FAILED /
-  INPUT_REQUIRED ...), streaming or push for long tasks. The concept to learn: two identities per request
-  (the calling agent AND the person) -> OAuth token exchange ("Supervisor on behalf of gaurav, for
-  catalog-agent only"), plus network failures, timeouts and retries between agents.
-- Phase 5 check: a content_id passed to play_title must have come from a real search_title result
-  (today it passes through the Catalog model's text and the Supervisor model's arguments).
-
-## Parked from Phase 2 (eval work, one change at a time, measure with --compare)
-- 12b: "I don't like horror, and I love Christopher Nolan films" -> must produce TWO remember_taste calls; the
-  answer must not claim a preference with no matching call. Seen live: ONE call, answer claimed both (a false
-  claim: the trace is the truth, the answer is only a claim). Fix candidates: a prompt line, or remember_taste
-  accepting several items.
-- Taste tools are not in the evals yet (eval SERVERS are stdio catalog + device only).
-- Eval case: a request with no year ("The Grand Seduction") -> count provider rejections in the trace
-  (`(rejected by provider)`); the run must still end with a correct search_title.
-- `requested` is not `watched`: record_watch runs when commands were SENT, so a title blocked on the TV (seen:
-  The Friend on Mishika's Kids profile, maturity rating) still lands in history. Phase 4/5: verify, or label
-  history entries "requested".
-- Kids profile: Mishika's Netflix profile is a Kids profile. The agent does not know ratings, so it sends titles
-  Netflix will refuse. Default when it matters: add maturity rating to search_title + a per-person "kids" flag,
-  and have the agent say "not available on <name>'s profile" instead of playing.
-- Mixed transports split identity: with taste over HTTP but device over stdio, history went to mishika while the
-  TV used the highlighted (gaurav) profile. Default: run all servers over HTTP when logged in, or have the agent
-  refuse a TV action over stdio while a login is active.
 
 ## Phase 3: DONE (multi-agent orchestration, routing + skills; hand-written, no framework), completed 2026-10-23
 - Step 1 DONE: the loop moved from run_agent() into a reusable `Agent(name, system, servers, after_tool=...)`
@@ -566,8 +512,10 @@ Users in realm `household`: gaurav (sub 1111...), mishika (sub 2222...). Dev pas
   logs/device_mcp.log (tuning without Jaeger). start-concierge.ps1 starts Jaeger when the container exists.
   +3 tests (163), mutation-checked.
 
-## Phase 5: Hardening and evals (IN PROGRESS)
-Decided 2026-10-23: NO approval step before device actions (Gaurav). Promptfoo: later, not now.
+## Phase 5: Hardening and evals (CLOSED 2026-10-24 after Steps 1-2)
+Decided 2026-10-23: NO approval step before device actions (Gaurav). Decided 2026-10-24: the rest of Phase 5
+(Promptfoo, ~40 eval cases, a fake taste server in the evals, online evals, an audit log) is NOT planned: it is
+product hardening, not agent concepts. Kept as a habit: run the evals after every change.
 
 - Step 1 (2026-10-24), PROMPT INJECTION, first defence: PROVENANCE. Who can write text a model reads:
   YouTube titles/channels = anyone on the internet (high); catalog titles = a commercial API (low); household
@@ -597,6 +545,91 @@ Decided 2026-10-23: NO approval step before device actions (Gaurav). Promptfoo: 
   is still model-written, so an injection could ADD a name; taste-mcp's consent check limits that to people who
   share with the household anyway. Stored injection in a household like/dislike reaches only the Consensus
   agent, which has no action tool. +2 tests (test_injection 7), 3 mutations caught. 170 tests.
+
+## Next ideas (2026-10-24)
+1. **[IMPORTANT, DONE 2026-10-25: 1a + 1b + 1c, see below] Conversations that remember (multi-turn state).** Today "Netflix or Prime?" ends
+   the run and the reply starts a NEW request that has forgotten the title (seen since Phase 1). Learn:
+   short-term memory (what carries between turns, what must not), a LangGraph thread that PAUSES on a
+   question to the person (interrupt) and RESUMES with the answer, reusing the checkpointer. Small: builds on
+   .state/checkpoints.sqlite and the thread id.
+2. **[IMPORTANT, planned] Agents in separate processes (A2A).** The Catalog agent behind its own server (A2A
+   spec 1.0); the Supervisor calls it over the network. Learn: discovery (Agent Card), long-running tasks
+   (Send Message -> Task: WORKING / COMPLETED / FAILED / INPUT_REQUIRED; streaming or push), failures, timeouts
+   and retries between agents, and TWO identities per call: the calling agent AND the person ("Supervisor on
+   behalf of gaurav, for catalog-agent only" = OAuth token exchange; Keycloak audience catalog-agent).
+   Today agent-to-agent calls are in-process Python functions (decided 2026-10-20 for Phase 3).
+3. (optional) **Model-chosen skills (progressive disclosure).** Today CODE (the router) picks the skill, 0 model
+   calls. Here the FALLBACK agent chooses: it sees only each skill's short description, calls a load_skill tool
+   for the one it needs, and only then gets that skill's full instructions and tools (+1 call). Learn: how
+   agents pick their own capabilities, and what that freedom costs. Measure it against the router with the
+   evals (model calls and accuracy on the same cases).
+4. (idea, not decided) **Cloud + mobile app with voice.** Everything except device-mcp in the cloud; device-mcp
+   stays on the home LAN (webOS + Wake-on-LAN need it) on an always-on box (e.g. a Raspberry Pi), reached
+   through an OUTBOUND tunnel (Tailscale or Cloudflare Tunnel: the cloud cannot dial into a home network).
+   Front end: a web app (PWA) with speech-to-text first; a native app later if at all. Backend: a small web API
+   around run_graph + catalog-mcp + taste-mcp + Postgres + Keycloak (public HTTPS needs a domain) in Docker on
+   one small server. Biggest code change: several people at once, so identity comes from each app user's token
+   (token exchange per server) instead of one .login.json; all servers over HTTP (a mixed stdio/HTTP setup once
+   sent history to one person and the TV profile of another). A play takes 30-60 s: the app needs a "working"
+   status. Rough effort: 6-9 sessions. Order: 1, then 2 (it teaches the remote-agent and identity parts), then this; 3 whenever it fits.
+
+## Idea 1: Conversations that remember (DONE 2026-10-25)
+- 1a (2026-10-24) PAUSE AND RESUME in the PLAY workflow. When play_title must ask (both services, several
+  titles, named service missing), workflows returns an Ask: a str (the question, so routed.py, tests and evals
+  are unchanged) carrying OPTIONS [{label, service, content_id, title}] built from the search result.
+  graph.py: play --(Ask)--> ask --> choose --(picked)--> END | --(unclear)--> ask. The ask node holds ONLY
+  interrupt(): the run STOPS, the checkpoint keeps question + options; Command(resume=<reply>) on the same thread
+  id continues it. choose matches the reply by CODE (workflows.pick_option: number/ordinal, service word, year,
+  "yes" for one option, cancel; contradictory or unclear -> one re-ask, then give up) and plays the option by code.
+  CLI: --reply <id> "...", --chat (a line answers the open question, else starts a new request), --pending
+  shows WAITING (paused) vs interrupted (crashed). Non-durable runs (evals, tests) get an InMemorySaver:
+  interrupt() needs a checkpointer. A pause is not an error: the node span gets graph.paused, not ERROR.
+  LEARNED (probe, then a mutation): on resume the paused node runs AGAIN FROM ITS FIRST LINE and interrupt()
+  returns the reply, so nothing may come before interrupt() (work there runs twice). Short-term memory here is
+  the thread's STATE (question + options), not chat text: the reply only SELECTS a saved option, so it cannot
+  bring an id (provenance across turns). 0 model calls per turn. Each request = its own thread = its own
+  idempotency key; the chat only remembers WHICH thread is waiting.
+  tests/test_conversation.py (9), test_graph shape updated. 6 mutations caught (work before interrupt, no pause,
+  guess on unclear, no re-ask, paused = crashed, id from the reply). 179 tests. Graph dry evals: 11/11 at 0 calls.
+  Verified live (2026-10-24, real TV): "play game changer" -> asked; "netflix" in --chat played the 2021 one;
+  --reply "the 2025 one" from another window played Prime (trace: only node ask + node choose, no route/search).
+  --pending showed it WAITING next to 4 old crashed runs.
+- 1b (2026-10-25) ANSWER OR NEW REQUEST? (graph.turn_kind, used by --chat). The person may change the subject
+  while a question is open. CODE decides, with the existing routing rules as the judge: no rule claims the line
+  ("prime", "2", "the 2021 one", "no") -> an ANSWER; a non-PLAY rule claims it ("is the tv on?", a song, taste,
+  suggest) -> NEW; a PLAY line is new only if its title names something the open question does not ("play lupin"
+  vs "play the netflix one"). Change-of-mind words are stripped first ("actually", "no,", "wait" at the start,
+  "instead" at the end). A NEW request first CLOSES the old question (resumed with "cancel"), so nothing is left
+  WAITING forever. chat_turn() split out of chat() for tests. +3 tests (test_conversation 12), 5 mutations caught
+  (all lines answers, all PLAY lines new, old question left open, change words kept, kept in the new request).
+  182 tests. Learned: dialogue management = deciding what a turn IS before acting on it; reuse the router's
+  "only claim what you are sure of" so an unclear line defaults to the safe reading (answer -> re-ask).
+  Known limit: a new request that no rule claims (e.g. "what about something funny?") is read as an answer
+  -> re-asked, then dropped.
+- 1c (2026-10-25) MESSAGE MEMORY on the agent paths. "suggest a comedy" -> "...Shall I play it?" -> "play the first
+  one" used to be a new request searching for a title called "the first one". Four parts:
+  (1) ONE THREAD PER CONVERSATION (--chat), each request a TURN (state.turn). A new request on a finished thread
+      runs again from route with the old state. The request id (idempotency key) is "<thread>#<turn>" from turn 2
+      (turn 1 = the thread id, as before): one play per TURN; a crash-resumed turn keeps its key.
+      Learned: conversation id != request id (mutation: one key per chat -> the 2nd play was "already played").
+  (2) history = what was SAID: the request + the final answer of each turn, written by a new `remember` node at
+      the end of every turn (every END edge now goes through it). A REDUCER (keep_recent) appends and keeps the
+      last 3 turns; each message cut at 1500 chars. NEVER tool calls or tool results (big, and they can carry
+      injected text). engine.Agent.run(request, trace, history) puts it between the system prompt and the request;
+      the team (fallback) and the Consensus agent (suggest) get it; workflows need none (0 calls).
+  (3) PROVENANCE ACROSS TURNS: known_ids = the (service, id) pairs real searches returned in this conversation,
+      saved BY CODE (the node wrapper opens engine.SEARCHED_IDS with them and saves what it grew to). So the
+      Supervisor may play an id from turn 1's search in turn 2, but an id that only appears in the history TEXT is
+      still BLOCKED. Learned: the model reads the memory; code keeps the trusted record.
+  (4) router.refers_back: a PLAY whose title is only reference words ("the first one", "it again", "the 2nd") with
+      history present goes to the team (reason "refers to an earlier turn"), not to the title search.
+  Tests: test_conversation 16 (+4: the model is SHOWN system/user/assistant/user with no tool results and plays turn
+  1's searched id; an id only in history text is blocked; history trimmed; two plays in one chat both run).
+  test_graph (shape: remember node; state keys), test_resilience (fake agent signature) updated. 6 mutations caught
+  (no history to the team, no trim, known ids ignored, ids from history text, one request id per chat, no
+  refers-back rule). 186 tests; selftest ok; 5 drills pass; graph dry evals 11/11 at 0 calls.
+  Cost: a reference turn ("play the first one") is a team run, ~2 model calls (it was 0 calls and a wrong search).
+  Not done (on purpose): summarising old turns instead of dropping them; long-term memory beyond taste-mcp.
 
 ## Known fragile points carried forward
 - TV waits the TV cannot observe (picker, title page) are still fixed; their spans now measure them (Phase 4).

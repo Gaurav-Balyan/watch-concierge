@@ -189,8 +189,9 @@ def supervisor(trace: list | None = None, request: str | None = None) -> engine.
                        after_tool=recorder.record_watch_after_play, local_tools=tools)
 
 
-async def run_team(request: str, trace: list | None = None) -> str:
-    return await supervisor(trace, request).run(request, trace)
+async def run_team(request: str, trace: list | None = None, history: list | None = None) -> str:
+    """history (idea 1c): the conversation's earlier turns, so "play the first one" can be understood."""
+    return await supervisor(trace, request).run(request, trace, history)
 
 
 async def show_tools():

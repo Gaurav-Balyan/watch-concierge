@@ -66,11 +66,11 @@ def test_a_crash_in_suggest_resumes_without_saving_the_taste_twice():
     log, calls = [], {"consensus": 0}
 
     class CrashOnce(FakeSkillAgent):
-        async def run(self, question, trace):
+        async def run(self, question, trace, history=None):      # history: idea 1c
             calls["consensus"] += 1
             if calls["consensus"] == 1:
                 raise RuntimeError("simulated crash inside the suggest node")
-            return await super().run(question, trace)
+            return await super().run(question, trace, history)
 
     saved = (skill_agents.has_taste, skill_agents.taste_agent, skill_agents.consensus_agent,
              skill_agents.logged_in_username, config.STATE_DIR)

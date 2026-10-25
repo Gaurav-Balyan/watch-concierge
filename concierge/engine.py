@@ -415,8 +415,9 @@ class Agent:
         self.after_tool = after_tool
         self.local_tools = local_tools or []
 
-    async def run(self, request: str, trace: list | None = None) -> str:
-        """Open THIS agent's servers (with tokens for those servers only), then run the loop."""
+    async def run(self, request: str, trace: list | None = None, history: list | None = None) -> str:
+        """Open THIS agent's servers (with tokens for those servers only), then run the loop.
+        history (idea 1c): earlier turns of the conversation, [{"role": "user"|"assistant", "content"}]."""
         with span(f"agent {self.name}", {"gen_ai.operation.name": "invoke_agent",
                                          "gen_ai.agent.name": self.name,
                                          "agent.servers": list(self.servers)}):
@@ -424,23 +425,27 @@ class Agent:
                 for tool in self.local_tools:
                     toolbox.add_local(tool)
                 print(f"[{self.name}] discovered tools:\n" + toolbox.describe())
-                return await self.loop(toolbox, request, trace)
+                return await self.loop(toolbox, request, trace, history)
 
-    async def loop(self, toolbox: McpToolbox, request: str, trace: list | None = None) -> str:
+    async def loop(self, toolbox: McpToolbox, request: str, trace: list | None = None,
+                   history: list | None = None) -> str:
         """The tool-use loop. If `trace` is a list, every tool call is appended to it as a dict.
         Phase 5: runs inside the request's set of searched ids (opened here if no outer agent did)."""
         with searched_ids_scope():
-            return await self._loop(toolbox, request, trace)
+            return await self._loop(toolbox, request, trace, history or [])
 
-    async def _loop(self, toolbox: McpToolbox, request: str, trace: list | None) -> str:
+    async def _loop(self, toolbox: McpToolbox, request: str, trace: list | None, history: list) -> str:
         max_turns = self.max_turns or MAX_TURNS
         # Reads GROQ_API_KEY from the environment. Phase 4: the SDK retries rate limits, 5xx and dropped
         # connections itself, with backoff; we set how often, and do NOT add a second retry loop on top.
         client = AsyncGroq()
         if hasattr(client, "with_options"):      # the real SDK (tests and evals install simpler fakes)
             client = client.with_options(max_retries=config.GROQ_MAX_RETRIES)
+        # Idea 1c: MESSAGE MEMORY. Earlier turns go between the system prompt and this request, as the plain
+        # text that was said (the person's words, the final answers): no tool calls, no tool results.
         messages = [
             {"role": "system", "content": self.system},
+            *({"role": m["role"], "content": m["content"]} for m in history),
             {"role": "user", "content": request},
         ]
         seen_calls: dict[tuple, str] = {}   # (tool, args) -> "ok" | "error", for this request only
