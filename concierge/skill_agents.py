@@ -5,7 +5,7 @@ The agents built from SKILL FILES (concierge/skills/*.md), plus the small code h
                          permission (get_household_taste is hidden from it)
     consensus_agent()    skills/suggest.md: suggestions for one person or several; taste-mcp WITH the extra
                          scope taste-household-read; titles confirmed by check_titles (code)
-    check_titles         a CODE tool: up to 4 search_title calls in parallel; only confirmed titles come back
+    check_titles         a CODE tool: up to 12 search_title calls (4 at a time); only confirmed titles come back
     has_taste()          is taste-mcp configured (i.e. full mode, with a login)?
     logged_in_username() who is logged in, from the login state (code, never a model)
 
@@ -39,7 +39,8 @@ def consensus_agent(trace: list | None = None) -> engine.Agent:
                               {"check_titles": check_titles_tool(trace)})
 
 
-MAX_TITLES_CHECKED = 4
+MAX_TITLES_CHECKED = 12     # was 4 (Phase 3): "give me 10 comedies" got 3-4. Each title = one catalog search.
+PARALLEL_SEARCHES = 4       # at most this many searches at once: 12 at once could trip the API's rate limit
 
 
 def check_titles_tool(trace: list | None) -> engine.LocalTool:
@@ -55,10 +56,16 @@ def check_titles_tool(trace: list | None) -> engine.LocalTool:
             if title:
                 wanted.append({"title": title, **({"year": str(t["year"])} if t.get("year") else {})})
         if not wanted:
-            raise ValueError("titles is empty: give up to 4 titles, e.g. [{\"title\": \"Inception\", \"year\": \"2010\"}]")
+            raise ValueError(f"titles is empty: give up to {MAX_TITLES_CHECKED} titles, "
+                             "e.g. [{\"title\": \"Inception\", \"year\": \"2010\"}]")
+        gate = asyncio.Semaphore(PARALLEL_SEARCHES)
+
+        async def search(box, w):
+            async with gate:
+                return await engine.call_traced(box, "search_title", w, trace, "check_titles")
+
         async with engine.McpToolbox({"catalog": engine.SERVERS["catalog"]}) as box:
-            results = await asyncio.gather(*(engine.call_traced(box, "search_title", w, trace, "check_titles")
-                                             for w in wanted))
+            results = await asyncio.gather(*(search(box, w) for w in wanted))
         confirmed, not_found, errors = [], [], []
         for w, (text, is_error) in zip(wanted, results):
             if is_error:
@@ -70,7 +77,7 @@ def check_titles_tool(trace: list | None) -> engine.LocalTool:
 
     return engine.LocalTool(
         name="check_titles",
-        description=("Check up to 4 titles at once in the catalog (Netflix and Prime in India). Returns the "
+        description=(f"Check up to {MAX_TITLES_CHECKED} titles at once in the catalog (Netflix and Prime in India). Returns the "
                      "confirmed ones with year, service and content id, and the ones not found."),
         parameters={"type": "object", "properties": {"titles": {
             "type": "array", "description": "e.g. [{\"title\": \"Inception\", \"year\": \"2010\"}]",

@@ -324,6 +324,40 @@ def test_a_skill_needing_an_unconfigured_server_says_so():
     raise AssertionError("built an agent without its server")
 
 
+# ----------------------------------------------------------------- suggestions: how many titles (2026-10-28)
+def test_check_titles_checks_up_to_12_titles_4_at_a_time():
+    # "Give me 10 comedies" got 3-4: check_titles took only 4. Now 12, but never more than 4 searches at once.
+    from concierge import skill_agents
+    running, peak, real = [0], [0], agent.call_traced
+
+    async def counting(box, name, args, trace, who):
+        running[0] += 1
+        peak[0] = max(peak[0], running[0])
+        try:
+            await asyncio.sleep(0.05)                   # long enough for parallel calls to overlap
+            return await real(box, name, args, trace, who)
+        finally:
+            running[0] -= 1
+
+    saved = agent.SERVERS, agent.call_traced
+    agent.SERVERS, agent.call_traced = dict(FIXED), counting
+    trace = []
+    try:
+        titles = [{"title": "The Friend", "year": "2025"}] + [{"title": f"Nope {i}"} for i in range(12)]   # 13
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = json.loads(asyncio.run(skill_agents.check_titles_tool(trace).fn({"titles": titles})))
+    finally:
+        agent.SERVERS, agent.call_traced = saved
+    assert len(calls(trace, "search_title")) == 12, len(calls(trace, "search_title"))   # the 13th is dropped
+    assert peak[0] == 4, peak[0]
+    assert [m["title"] for m in result["confirmed"]] == ["The Friend"] and len(result["not_found"]) == 11
+
+
+def test_the_suggest_skill_proposes_more_when_a_number_is_asked():
+    text = skills.load("suggest").instructions
+    assert "one and a half times that many" in text and "at most 12" in text
+    assert "you asked for 10; I could confirm 7" in text       # a shortfall is said, not hidden
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in list(globals().items()):

@@ -566,6 +566,21 @@ product hardening, not agent concepts. Kept as a habit: run the evals after ever
 4. **[NEXT, parked until Gaurav starts it] Cloud + home setup, with a phone web app and voice** (plan agreed
    2026-10-25: MINIMAL application changes, only what the move needs). See "Cloud + home plan" below.
 
+5. **Suggestions: more and better titles.** Seen live (2026-10-25): "give me 10 comedy movies" returned 3-4 titles.
+   Cause: check_titles took at most 4 titles and suggest.md said "up to 4"; titles come from the model's MEMORY and are
+   then verified (generate-then-verify), so unavailable ones drop out.
+   - A (DONE 2026-10-28): MAX_TITLES_CHECKED 4 -> 12, at most 4 searches at once (PARALLEL_SEARCHES, so 12 do not hit
+     RapidAPI's rate limit in one burst); suggest.md: for "N titles" propose ~1.5x N (max 12), else ~5; and SAY a
+     shortfall ("you asked for 10; I could confirm 7 available in India"). +2 tests (test_routing), 3 mutations
+     caught. Cost: up to 12 catalog searches per suggestion (cached 24 h).
+   - B (later, small): a SECOND ROUND when too few were confirmed: the Consensus agent proposes and checks a few more,
+     once (it has the turns). Cost: 1-2 extra model calls only when needed.
+   - C (later, the better design): a catalog-mcp DISCOVER tool, discover(genre, service, count): ask the streaming
+     catalog itself for "comedies on Netflix / Prime in India" (one API call, real and current titles), and let the
+     agent CHOOSE from that list with the household's taste instead of inventing titles. Concept: GROUNDING BY
+     RETRIEVAL vs generate-then-verify. FIRST check the Streaming Availability API's filter/genre search and the
+     plan's quota (believed to exist; not verified).
+
 ## Cloud + home plan (parked 2026-10-25)
 Shape: everything except device-mcp in the cloud; device-mcp on an always-on box at home (webOS + Wake-on-LAN need
 the LAN), reached through an OUTBOUND tunnel (the cloud cannot dial into a home network). The phone talks to a small

@@ -240,14 +240,14 @@ python tests\test_agent_loop.py     #  7  offline: record_watch is wired in by c
 python tests\test_multi_agent.py    # 15  the team: handoffs, each agent's tools and tokens, whose taste
 python tests\test_tracing.py        #  7  spans: one trace per request, nesting, no tokens in spans
 python tests\test_household.py      # 10  household read: permission, consent, no history, audit, agents
-python tests\test_routing.py        # 31  offline: router, workflow policies (0 model calls), skills
+python tests\test_routing.py        # 33  offline: router, workflow policies (0 model calls), skills
 python tests\test_graph.py          # 11  offline: the graph = baselines/routed.py (parity), its edges, node spans
 python tests\test_resilience.py     # 21  offline: crash + resume, idempotency, retry, breaker, cache, TV, 401
 python tests\test_injection.py      #  7  offline: prompt injection: an id no search returned is blocked; taste hears only you
 python tests\test_conversation.py   # 16  offline: pause/resume on a question, answer or new request, message memory
 python tests\test_a2a.py            #  6  offline: the Catalog agent over A2A (card, task, provenance across the hop)
 ```
-Or all at once (192 tests): `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
+Or all at once (202 tests, incl. test_telegram.py's 8): `python -m pytest tests` (pytest comes with `requirements.txt`). Use `python -m pytest`,
 not plain `pytest`: plain `pytest` can pick up Anaconda's base Python, which has none of the project's
 packages (`No module named 'groq'`). If Keycloak or Postgres is down, those tests show SKIP.
 
